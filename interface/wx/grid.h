@@ -1994,7 +1994,7 @@ public:
 
         @since 3.3.0
      */
-    bool IsFullySpecified() const
+    bool IsFullySpecified() const;
 
     /**
         Assignment operator for coordinate types.
@@ -6183,6 +6183,28 @@ public:
     wxWindow* GetFrozenColGridWindow() const;
 
     /**
+        Return the row labels window containing frozen cells.
+
+        This window is shown only when there are frozen rows.
+        This window is not shown if the rows labels were hidden using
+        HideRowLabels().
+
+        @since 3.3.3
+     */
+    wxWindow* GetFrozenRowLabelWindow() const;
+
+    /**
+        Return the column labels window containing frozen cells.
+
+        This window is shown only when there are frozen columns.
+        This window is not shown if the columns labels were hidden using
+        HideColLabels().
+
+        @since 3.3.3
+     */
+    wxWindow* GetFrozenColLabelWindow() const;
+
+    /**
         Return the row labels window.
 
         This window is not shown if the row labels were hidden using
@@ -6243,15 +6265,38 @@ public:
 
     virtual void DrawCornerLabel(wxDC& dc);
 
+    /**
+        Draw the given text inside the specified rectangle.
+
+        The overload taking a single string splits it into an array of lines
+        (possibly consisting of just a single element if the string doesn't
+        contain any new line characters).
+
+        The alignment parameters may be ::wxALIGN_LEFT, ::wxALIGN_RIGHT and
+        either ::wxALIGN_CENTRE or ::wxALIGN_CENTER_HORIZONTAL for horizontal
+        alignment and ::wxALIGN_TOP, ::wxALIGN_BOTTOM and either
+        ::wxALIGN_CENTRE or ::wxALIGN_CENTER_VERTICAL for vertical one.
+
+        For the overload taking default alignment parameters, they are used
+        only if the provided wxGridCellAttr doesn't specify any alignment in
+        the corresponding direction.
+     */
     void DrawTextRectangle( wxDC& dc, const wxString& text, const wxRect& rect,
                             int horizontalAlignment = wxALIGN_LEFT,
                             int verticalAlignment = wxALIGN_TOP,
                             int textOrientation = wxHORIZONTAL ) const;
 
+    /// @overload
     void DrawTextRectangle( wxDC& dc, const wxArrayString& lines, const wxRect& rect,
                             int horizontalAlignment = wxALIGN_LEFT,
                             int verticalAlignment = wxALIGN_TOP,
                             int textOrientation = wxHORIZONTAL ) const;
+
+    /// @overload
+    void DrawTextRectangle(wxDC& dc, const wxString& text, const wxRect& rect,
+                           const wxGridCellAttr& attr,
+                           int defaultHAlign = wxALIGN_INVALID,
+                           int defaultVAlign = wxALIGN_INVALID) const;
 
     wxColour GetCellHighlightColour() const;
     int      GetCellHighlightPenWidth() const;

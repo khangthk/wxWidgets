@@ -4,6 +4,7 @@
 // Author:      Julian Smart, Vadim Zeitlin
 // Created:     08/09/2000
 // Copyright:   (c) 2000 Julian Smart, Vadim Zeitlin
+//              (c) 2026 wxWidgets development team
 // Licence:     wxWindows licence
 /////////////////////////////////////////////////////////////////////////////
 
@@ -31,7 +32,6 @@
 
 #if wxUSE_MS_HTML_HELP
     #include "wx/msw/helpchm.h"     // for ShowContextHelpPopup
-    #include "wx/utils.h"           // for wxGetMousePosition()
 #endif
 
 // ----------------------------------------------------------------------------
@@ -109,7 +109,8 @@ bool wxContextHelp::BeginContextHelp(wxWindow* win)
 
     EventLoop();
 
-    win->ReleaseMouse();
+    if ( win->HasCapture() )
+        win->ReleaseMouse();
 
     win->PopEventHandler(true);
 
@@ -152,6 +153,7 @@ bool wxContextHelp::EventLoop()
 
     while ( m_inHelp )
     {
+#ifndef __WXQT__
         if (wxTheApp->Pending())
         {
             wxTheApp->Dispatch();
@@ -160,6 +162,9 @@ bool wxContextHelp::EventLoop()
         {
             wxTheApp->ProcessIdle();
         }
+#else
+        wxTheApp->Dispatch();
+#endif
     }
 
     return true;
@@ -174,10 +179,11 @@ bool wxContextHelpEvtHandler::ProcessEvent(wxEvent& event)
         return true;
     }
 
-    if ((event.GetEventType() == wxEVT_CHAR) ||
-        (event.GetEventType() == wxEVT_KEY_DOWN) ||
-        (event.GetEventType() == wxEVT_ACTIVATE) ||
-        (event.GetEventType() == wxEVT_MOUSE_CAPTURE_CHANGED))
+    if ( (event.GetEventType() == wxEVT_CHAR) ||
+         (event.GetEventType() == wxEVT_KEY_DOWN) ||
+         (event.GetEventType() == wxEVT_ACTIVATE) ||
+         (event.GetEventType() == wxEVT_MOUSE_CAPTURE_CHANGED) ||
+         (event.GetEventType() == wxEVT_MOUSE_CAPTURE_LOST) )
     {
         // May have already been set to true by a left-click
         //m_contextHelp->SetStatus(false);
@@ -200,7 +206,9 @@ bool wxContextHelp::DispatchEvent(wxWindow* win, const wxPoint& pt)
 {
     wxCHECK_MSG( win, false, wxT("win parameter can't be null") );
 
-    wxHelpEvent helpEvent(wxEVT_HELP, win->GetId(), pt,
+    wxHelpEvent helpEvent(wxEVT_HELP,
+                          win->GetHelpIdAtPoint(win->ScreenToClient(pt)),
+                          pt,
                           wxHelpEvent::Origin_HelpButton);
     helpEvent.SetEventObject(win);
 
@@ -359,7 +367,7 @@ bool wxSimpleHelpProvider::ShowHelp(wxWindowBase *window)
 #endif // wxUSE_MS_HTML_HELP
         {
 #if wxUSE_TIPWINDOW
-            static wxTipWindow* s_tipWindow = nullptr;
+            static wxTipWindow::Ref s_tipWindow;
 
             if ( s_tipWindow )
             {
@@ -369,8 +377,8 @@ bool wxSimpleHelpProvider::ShowHelp(wxWindowBase *window)
                 s_tipWindow->Close();
             }
 
-            s_tipWindow = new wxTipWindow((wxWindow *)window, text,
-                                            100, &s_tipWindow);
+            s_tipWindow = wxTipWindow::New((wxWindow *)window, text,
+                                            100);
 #else // !wxUSE_TIPWINDOW
             // we tried wxCHMHelpController but it failed and we don't have
             // wxTipWindow to fall back on, so

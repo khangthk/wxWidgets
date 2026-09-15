@@ -109,6 +109,8 @@ public:
 
     virtual void SetWindowStyleFlag(long style) override;
 
+    virtual wxTextSearchResult SearchText(const wxTextSearch &search) const override;
+
     virtual wxString GetRTFValue() const override;
     virtual void SetRTFValue(const wxString& val) override;
     virtual bool IsRTFSupported() override { return IsMultiLine(); }
@@ -157,6 +159,8 @@ protected:
 
     virtual wxSize DoGetBestSize() const override;
     virtual wxSize DoGetSizeFromTextSize(int xlen, int ylen) const override;
+
+    virtual void DoSetSize(int x, int y, int width, int height, int sizeFlags) override;
 
     // flag is set to true when the user edits the controls contents
     bool m_dirty;

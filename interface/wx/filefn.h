@@ -227,10 +227,23 @@ time_t wxFileModificationTime(const wxString& filename);
 /**
     Renames @a oldpath to @e newpath, returning @true if successful.
 
-    If @a newpath is a directory, @a oldpath is moved into it (@a overwrite is
-    ignored in this case). Otherwise, if @a newpath is an existing file, it is
-    overwritten if @a overwrite is @true (default) and the function fails if @a
-    overwrite is @false.
+    If @a newpath is an existing file, it is overwritten if @a overwrite is
+    @true (default) and the function fails if @a overwrite is @false.
+
+    Since wxWidgets 3.3.4, `MoveFileEx()` is used under MSW, which makes
+    replacing the existing @a newpath atomic if both files are on the same
+    volume. Note that this function does @e not preserve the attributes of the
+    replaced file: use wxFileName::CopyAttributesFrom() before renaming if you
+    need to keep them.
+
+    @param oldpath
+        The path of the existing file to rename.
+    @param newpath
+        The new path for the file. Must be a file, not a directory.
+    @param overwrite
+        If @a newpath exists, it will be overwritten if @a overwrite is @true,
+        otherwise the function will fail. If it doesn't exist, this parameter
+        is ignored.
 
     @header{wx/filefn.h}
 */
@@ -290,6 +303,19 @@ wxString wxGetWorkingDirectory(char* buf = nullptr, int sz = 1000);
 /**
     Returns the directory part of the filename.
 
+    @deprecated Please use wxFileName::GetPath() instead.
+
+    Note that the behaviour of this function is slightly different for Windows
+    paths including drive letters: it returns a string without trailing
+    backslash for the absolute paths with drive letters and a string with
+    trailing dot for the relative paths with drive letters.
+
+    Since wxWidgets 3.3.3 all path separators are normalized to the current
+    platform path separator in the returned path, i.e. under Windows forward
+    slashes in @a path will be replaced with backslashes in the returned value.
+    Previous versions of wxWidgets didn't perform this normalization and
+    returned the path with the same separators as in @a path.
+
     @header{wx/filefn.h}
 */
 wxString wxPathOnly(const wxString& path);
@@ -343,6 +369,31 @@ bool wxConcatFiles(const wxString& src1,
     @header{wx/filefn.h}
 */
 bool wxRemoveFile(const wxString& file);
+
+/**
+    Moves @a path to the system trash or recycle bin.
+
+    This works for both files and directories. The item is not permanently
+    deleted and can be restored by the user from the platform's trash
+    facility.
+
+    Preprocessor symbol @c wxHAS_MOVE_TO_TRASH is defined if this function is
+    available on the current platform.
+
+    Implementation details:
+    - Under Windows, this uses @c SHFileOperation with @c FOF_ALLOWUNDO.
+    - Under macOS, this uses @c NSFileManager's @c trashItemAtURL method.
+    - Under Unix systems (including Linux and BSD), this uses @c g_file_trash.
+
+    @returns @true on success or @false if the operation failed in which case
+        an error message will have been logged using wxLogError() and the file
+        or directory at @a path is left in place.
+
+    @since 3.3.3
+
+    @header{wx/filefn.h}
+*/
+bool wxMoveToTrash(const wxString& path);
 
 /**
     File permission bit names.
@@ -490,6 +541,21 @@ enum wxFileKind
     wxFILE_KIND_PIPE      ///< A pipe
 };
 
+///@}
+
+/** @addtogroup group_funcmacro_file */
+///@{
+/**
+    Returns the file descriptor for the given @a fp.
+
+    @param fp
+        A valid pointer to a @c FILE.
+    @returns
+        The file descriptor for the given @a fp, or -1 on error.
+
+    @since 3.3.4
+ */
+int wxGetFileDescriptor(FILE *fp);
 ///@}
 
 /** @addtogroup group_funcmacro_file */

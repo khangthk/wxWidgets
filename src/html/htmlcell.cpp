@@ -3,6 +3,7 @@
 // Purpose:     wxHtmlCell - basic element of HTML output
 // Author:      Vaclav Slavik
 // Copyright:   (c) 1999 Vaclav Slavik
+//              (c) 2026 wxWidgets development team
 // Licence:     wxWindows licence
 /////////////////////////////////////////////////////////////////////////////
 
@@ -76,17 +77,6 @@ GetSelectedTextBgColour(const wxColour& WXUNUSED(clr))
 //-----------------------------------------------------------------------------
 
 wxIMPLEMENT_ABSTRACT_CLASS(wxHtmlCell, wxObject);
-
-wxHtmlCell::wxHtmlCell() : wxObject()
-{
-    m_Next = nullptr;
-    m_Parent = nullptr;
-    m_Width = m_Height = m_Descent = 0;
-    m_ScriptMode = wxHTML_SCRIPT_NORMAL;        // <sub> or <sup> mode
-    m_ScriptBaseline = 0;                       // <sub> or <sup> baseline
-    m_CanLiveOnPagebreak = true;
-    m_Link = nullptr;
-}
 
 wxHtmlCell::~wxHtmlCell()
 {
@@ -191,8 +181,11 @@ void wxHtmlCell::Layout(int WXUNUSED(w))
 
 
 
-const wxHtmlCell* wxHtmlCell::Find(int WXUNUSED(condition), const void* WXUNUSED(param)) const
+const wxHtmlCell* wxHtmlCell::Find(int condition, const void* param) const
 {
+    if ( CheckIsAnchor(condition, param) )
+        return this;
+
     return nullptr;
 }
 
@@ -314,6 +307,18 @@ wxString wxHtmlCell::Dump(int indent) const
 
 wxIMPLEMENT_ABSTRACT_CLASS(wxHtmlWordCell, wxHtmlCell);
 
+static constexpr unsigned NBSP_VALUE = 0x00a0;
+
+static bool wxHtmlIsNBSP(wxUniChar c)
+{
+    return c == wxUniChar(NBSP_VALUE);
+}
+
+static bool wxHtmlIsLineBreakingSpace(wxUniChar c)
+{
+    return !wxHtmlIsNBSP(c) && wxIsspace(c);
+}
+
 wxHtmlWordCell::wxHtmlWordCell(const wxString& word, const wxDC& dc) : wxHtmlCell()
     , m_Word(word)
 {
@@ -324,12 +329,15 @@ wxHtmlWordCell::wxHtmlWordCell(const wxString& word, const wxDC& dc) : wxHtmlCel
     m_Descent = d;
     SetCanLiveOnPagebreak(false);
     m_allowLinebreak = true;
+    if ( !m_Word.empty() && wxHtmlIsNBSP(m_Word[0u]) )
+        m_allowLinebreak = false;
 }
 
 void wxHtmlWordCell::SetPreviousWord(wxHtmlWordCell *cell)
 {
     if ( cell && m_Parent == cell->m_Parent &&
-         !wxIsspace(cell->m_Word.Last()) && !wxIsspace(m_Word[0u]) )
+         !wxHtmlIsLineBreakingSpace(cell->m_Word.Last()) &&
+         !wxHtmlIsLineBreakingSpace(m_Word[0u]) )
     {
         m_allowLinebreak = false;
     }
@@ -637,7 +645,7 @@ wxString wxHtmlWordWithTabsCell::GetPartAsText(int begin, int end) const
     // copy the content until we reach 'end':
     for ( ; pos < end; ++i )
     {
-        const wxChar c = *i;
+        const wxUniChar c = *i;
         sel += c;
 
         if ( c == '\t' )
@@ -666,20 +674,22 @@ wxString wxHtmlWordCell::GetDescription() const
 
 wxIMPLEMENT_ABSTRACT_CLASS(wxHtmlContainerCell, wxHtmlCell);
 
+void wxHtmlContainerCell::InitParent(wxHtmlContainerCell *parent)
+{
+    m_Parent = parent;
+    if (m_Parent) m_Parent->InsertCell(this);
+}
+
 wxHtmlContainerCell::wxHtmlContainerCell(wxHtmlContainerCell *parent) : wxHtmlCell()
 {
-    m_Cells = m_LastCell = nullptr;
-    m_Parent = parent;
-    m_MaxTotalWidth = 0;
-    if (m_Parent) m_Parent->InsertCell(this);
-    m_AlignHor = wxHTML_ALIGN_LEFT;
-    m_AlignVer = wxHTML_ALIGN_BOTTOM;
-    m_IndentLeft = m_IndentRight = m_IndentTop = m_IndentBottom = 0;
-    m_WidthFloat = 100; m_WidthFloatUnits = wxHTML_UNITS_PERCENT;
-    m_Border = 0;
-    m_MinHeight = 0;
-    m_MinHeightAlign = wxHTML_ALIGN_TOP;
-    m_LastLayout = -1;
+    InitParent(parent);
+}
+
+wxHtmlContainerCell::wxHtmlContainerCell(const wxHtmlTag& tag,
+                                         wxHtmlContainerCell *parent)
+    : wxHtmlCell(tag)
+{
+    InitParent(parent);
 }
 
 wxHtmlContainerCell::~wxHtmlContainerCell()
@@ -1177,10 +1187,13 @@ wxHtmlLinkInfo *wxHtmlContainerCell::GetLink(int x, int y) const
 {
     wxHtmlCell *cell = FindCellByPos(x, y);
 
-    // VZ: I don't know if we should pass absolute or relative coords to
-    //     wxHtmlCell::GetLink()? As the base class version just ignores them
-    //     anyhow, it hardly matters right now but should still be clarified
-    return cell ? cell->GetLink(x, y) : nullptr;
+    if ( !cell )
+        return nullptr;
+
+    wxPoint relpos(x, y);
+    relpos -= cell->GetAbsPos(this);
+
+    return cell->GetLink(relpos.x, relpos.y);
 }
 
 
@@ -1279,6 +1292,9 @@ void wxHtmlContainerCell::SetWidthFloat(const wxHtmlTag& tag, double pixel_scale
 
 const wxHtmlCell* wxHtmlContainerCell::Find(int condition, const void* param) const
 {
+    if ( CheckIsAnchor(condition, param) )
+        return this;
+
     if (m_Cells)
     {
         for (wxHtmlCell *cell = m_Cells; cell; cell = cell->GetNext())
@@ -1353,7 +1369,11 @@ bool wxHtmlContainerCell::ProcessMouseClick(wxHtmlWindowInterface *window,
     bool retval = false;
     wxHtmlCell *cell = FindCellByPos(pos.x, pos.y);
     if ( cell )
-        retval = cell->ProcessMouseClick(window, pos, event);
+    {
+        wxPoint relpos(pos);
+        relpos -= cell->GetAbsPos(this);
+        retval = cell->ProcessMouseClick(window, relpos, event);
+    }
 
     return retval;
 }

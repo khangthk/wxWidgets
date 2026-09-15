@@ -109,12 +109,36 @@ enum wxSystemColour
     wxSYS_COLOUR_LISTBOXTEXT,
 
     /**
-        Text colour for the unfocused selection of list-like controls.
+        Text colour for the selected items in list-like controls.
+
+        This colour is supposed to have good contrast with the background drawn
+        by wxRendererNative::DrawItemSelectionRect().
 
         @since 2.9.1
      */
     wxSYS_COLOUR_LISTBOXHIGHLIGHTTEXT,
 
+    /**
+        Colour of separator lines in grid-like controls.
+
+        On macOS, this maps to `[NSColor gridLines]`, on other platforms
+        it is currently the same as ::wxSYS_COLOUR_BTNFACE.
+
+        @since 3.3.2
+     */
+    wxSYS_COLOUR_GRIDLINES,
+
+    /**
+        Background colour of a selected item in a wxListBox or similar control.
+
+        This colour is usually either identical or close to the main accent or
+        theme colour of the operating system.
+
+        On macOS, this maps to `[NSColor selectedContentBackgroundColor]`.
+
+        @since 3.3.2
+     */
+    wxSYS_COLOUR_LISTBOXHIGHLIGHT,
 
     // synonyms:
 
@@ -152,8 +176,17 @@ enum wxSystemMetric
     wxSYS_MOUSE_BUTTONS,      //!< Number of buttons on mouse, or zero if no mouse was installed.
     wxSYS_BORDER_X,           //!< Width of single border.
     wxSYS_BORDER_Y,           //!< Height of single border.
-    wxSYS_CURSOR_X,           //!< Width of cursor.
-    wxSYS_CURSOR_Y,           //!< Height of cursor.
+    wxSYS_CURSOR_X,           //!< Width of cursor in logical pixels.
+    wxSYS_CURSOR_Y,           //!< Height of cursor in logical pixels.
+    /**
+        Width or height of cursor in logical pixels.
+
+        This is the same as wxSYS_CURSOR_X and wxSYS_CURSOR_Y as cursors are
+        always square.
+
+        @since 3.3.0
+     */
+    wxSYS_CURSOR_SIZE,
     wxSYS_DCLICK_X,           //!< Width in pixels of rectangle within which two successive mouse clicks must fall to generate a double-click.
     wxSYS_DCLICK_Y,           //!< Height in pixels of rectangle within which two successive mouse clicks must fall to generate a double-click.
     wxSYS_DRAG_X,             //!< Width in pixels of a rectangle centered on a drag point to allow for limited movement of the mouse pointer before a drag operation begins.
@@ -171,8 +204,8 @@ enum wxSystemMetric
     wxSYS_WINDOWMIN_Y,        //!< Minimum height of a window.
     wxSYS_SCREEN_X,           //!< Width of the screen in pixels.
     wxSYS_SCREEN_Y,           //!< Height of the screen in pixels.
-    wxSYS_FRAMESIZE_X,        //!< Width of the window frame for a wxTHICK_FRAME window.
-    wxSYS_FRAMESIZE_Y,        //!< Height of the window frame for a wxTHICK_FRAME window.
+    wxSYS_FRAMESIZE_X,        //!< Width of the window frame for a window with wxRESIZE_BORDER.
+    wxSYS_FRAMESIZE_Y,        //!< Height of the window frame for a window with wxRESIZE_BORDER.
     wxSYS_SMALLICON_X,        //!< Recommended width of a small icon (in window captions, and small icon view).
     wxSYS_SMALLICON_Y,        //!< Recommended height of a small icon (in window captions, and small icon view).
     wxSYS_HSCROLL_Y,          //!< Height of horizontal scrollbar in pixels.
@@ -438,5 +471,23 @@ public:
         @since 3.3.0
      */
     static wxColour SelectLightDark(wxColour colForLight, wxColour colForDark);
+
+    /**
+        Check if the mouse moved far enough to start a drag operation.
+
+        This function simply checks if the mouse has travelled further than the
+        configured drag threshold from the click position to consider that the
+        user intends to drag something.
+
+        @param origin Position of the mouse click.
+        @param current Current position of the mouse.
+        @param win Window to use for determining the drag threshold.
+            May be @NULL but it's recommended to provide it, see GetMetric().
+
+        @since 3.3.4
+     */
+    static bool ExceedsDragThreshold(const wxPoint& origin,
+                                     const wxPoint& current,
+                                     const wxWindow* win = nullptr);
 };
 

@@ -50,7 +50,7 @@
 class HeaderCtrlWidgetsPage : public WidgetsPage
 {
 public:
-    HeaderCtrlWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist)
+    HeaderCtrlWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist)
         : WidgetsPage(book, imaglist, header_xpm)
     {
         m_header = nullptr;
@@ -158,7 +158,7 @@ void HeaderCtrlWidgetsPage::CreateContent()
                2, wxRA_SPECIFY_COLS);
         sizerCol->Add(m_colSettings[i].rbAlignments, wxSizerFlags().Expand().Border());
         ResetColumnStyle(i);
-        sizerTop->AddSpacer(15);
+        sizerTop->AddSpacer(FromDIP(15));
         sizerTop->Add(sizerCol, wxSizerFlags().Expand());
     }
 

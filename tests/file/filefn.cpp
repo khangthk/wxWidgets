@@ -270,6 +270,29 @@ void FileFunctionsTestCase::DoRemoveFile(const wxString& filePath)
     CHECK( !file.Exists() );
 }
 
+namespace
+{
+
+void CreateFileWithContents(const wxString& path, const wxString& contents)
+{
+    wxFFile f(path, "w");
+    REQUIRE( f.IsOpened() );
+    REQUIRE( f.Write(contents) );
+}
+
+wxString GetFileContents(const wxString& path)
+{
+    wxFFile f(path, "r");
+    REQUIRE( f.IsOpened() );
+
+    wxString contents;
+    REQUIRE( f.ReadAll(&contents) );
+
+    return contents;
+}
+
+} // anonymous namespace
+
 TEST_CASE_METHOD(FileFunctionsTestCase,
                  "FileFunctions::RenameFile",
                  "[filefn]")
@@ -294,17 +317,18 @@ FileFunctionsTestCase::DoRenameFile(const wxString& oldFilePath,
 {
     INFO("File 1:" << oldFilePath << "  File 2: " << newFilePath);
 
+    // Use different contents for the two files to allow checking which of
+    // them the destination file has at the end.
+    const wxString contentsSrc("source");
+    const wxString contentsDst("destination");
+
     // Create temporary source file.
-    wxTextFile file;
-    REQUIRE( file.Create(oldFilePath) );
-    CHECK( file.Close() );
+    CreateFileWithContents(oldFilePath, contentsSrc);
 
     if ( withNew )
     {
         // Create destination file to test overwriting.
-        wxTextFile file2;
-        REQUIRE( file2.Create(newFilePath) );
-        CHECK( file2.Close() );
+        CreateFileWithContents(newFilePath, contentsDst);
 
         CHECK( wxFileExists(newFilePath) );
     }
@@ -320,8 +344,7 @@ FileFunctionsTestCase::DoRenameFile(const wxString& oldFilePath,
     }
 
     CHECK( wxFileExists(oldFilePath) );
-    CHECK( wxFileExists(oldFilePath) );
-    CHECK( wxFileExists(oldFilePath) );
+
     bool shouldFail = !overwrite && withNew;
     if ( shouldFail )
     {
@@ -329,6 +352,10 @@ FileFunctionsTestCase::DoRenameFile(const wxString& oldFilePath,
         // Verify that file has not been renamed.
         CHECK( wxFileExists(oldFilePath) );
         CHECK( wxFileExists(newFilePath) );
+
+        // Neither file should have been modified.
+        CHECK( GetFileContents(oldFilePath) == contentsSrc );
+        CHECK( GetFileContents(newFilePath) == contentsDst );
 
         // Cleanup.
         wxRemoveFile(oldFilePath);
@@ -339,6 +366,9 @@ FileFunctionsTestCase::DoRenameFile(const wxString& oldFilePath,
         // Verify that file has been renamed.
         CHECK( !wxFileExists(oldFilePath) );
         CHECK( wxFileExists(newFilePath) );
+
+        // And that it really has the contents of the source file.
+        CHECK( GetFileContents(newFilePath) == contentsSrc );
     }
 
     // Cleanup.
@@ -488,6 +518,17 @@ TEST_CASE_METHOD(FileFunctionsTestCase,
     wxString pathOnly = wxPathOnly(filename.GetFullPath());
     if ( !wxDirExists(pathOnly) )
         CHECK( pathOnly == wxString() );
+
+    CHECK( wxPathOnly(wxString{}) == "" );
+    CHECK( wxPathOnly("foo") == "" );
+    CHECK( wxPathOnly("foo/") == "foo" );
+    CHECK( wxPathOnly("/foo/") == wxString(wxFILE_SEP_PATH) + "foo" );
+
+#ifdef __WINDOWS__
+    CHECK( wxPathOnly("c:\\foo.exe") == "c:" );
+    CHECK( wxPathOnly("c:foo.exe") == "c:." );
+    CHECK( wxPathOnly("foo\\bar.dll") == "foo" );
+#endif
 }
 
 // Unit tests for Mkdir and Rmdir doesn't cover non-ASCII directory names.
@@ -496,7 +537,7 @@ TEST_CASE_METHOD(FileFunctionsTestCase,
                  "FileFunctions::Mkdir",
                  "[filefn]")
 {
-    wxString dirname = wxString::FromUTF8("__wxMkdir_test_dir_with_\xc3\xb6");
+    wxString dirname = wxString::FromUTF8("__wxMkdir_test_dir_with_ö");
     INFO("Dir: " << dirname);
 
     CHECK( wxMkdir(dirname) );
@@ -508,7 +549,7 @@ TEST_CASE_METHOD(FileFunctionsTestCase,
                  "FileFunctions::Rmdir",
                  "[filefn]")
 {
-    wxString dirname = wxString::FromUTF8("__wxRmdir_test_dir_with_\xc3\xb6");
+    wxString dirname = wxString::FromUTF8("__wxRmdir_test_dir_with_ö");
     INFO("Dir: " << dirname);
 
     CHECK( wxMkdir(dirname) );
@@ -537,3 +578,25 @@ bool wxIsExecutable(const wxString &path);
 */
 
 #endif // wxUSE_FILE
+
+#if wxUSE_FSVOLUME
+
+#include "wx/volume.h"
+
+TEST_CASE("FSVolume", "[fs][volume]")
+{
+    wxFSVolumeBase vol;
+    CHECK( !vol.IsOk() );
+
+    const auto& volumes = wxFSVolumeBase::GetVolumes();
+    if ( volumes.empty() )
+    {
+        WARN("No volumes found, skipping wxFSVolume tests.");
+        return;
+    }
+
+    vol.Create(volumes[0]);
+    REQUIRE( vol.IsOk() );
+}
+
+#endif // wxUSE_FSVOLUME

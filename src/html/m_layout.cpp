@@ -3,6 +3,7 @@
 // Purpose:     wxHtml module for basic paragraphs/layout handling
 // Author:      Vaclav Slavik
 // Copyright:   (c) 1999 Vaclav Slavik
+//              (c) 2026 wxWidgets development team
 // Licence:     wxWindows licence
 /////////////////////////////////////////////////////////////////////////////
 
@@ -12,6 +13,7 @@
 #if wxUSE_HTML && wxUSE_STREAMS
 
 #ifndef WX_PRECOMP
+    #include "wx/brush.h"
     #include "wx/image.h"
 #endif
 
@@ -60,7 +62,7 @@ FORCE_LINK_ME(m_layout)
 class wxHtmlPageBreakCell : public wxHtmlCell
 {
 public:
-    wxHtmlPageBreakCell() {}
+    explicit wxHtmlPageBreakCell(const wxHtmlTag& tag) : wxHtmlCell(tag) {}
 
     bool AdjustPagebreak(int* pagebreak, int pageHeight) const override;
 
@@ -88,18 +90,44 @@ wxHtmlPageBreakCell::AdjustPagebreak(int* pagebreak, int pageHeight) const
     return false;
 }
 
+class wxHtmlLineBreakCell : public wxHtmlCell
+{
+public:
+    wxHtmlLineBreakCell(const wxHtmlTag& tag, int height) : wxHtmlCell(tag)
+        { m_Height = height; }
 
+    void Draw(wxDC& WXUNUSED(dc),
+              int WXUNUSED(x), int WXUNUSED(y),
+              int WXUNUSED(view_y1), int WXUNUSED(view_y2),
+              wxHtmlRenderingInfo& WXUNUSED(info)) override {}
+
+private:
+    wxDECLARE_NO_COPY_CLASS(wxHtmlLineBreakCell);
+};
+
+static bool HasLayoutContent(wxHtmlContainerCell *c)
+{
+    for ( wxHtmlCell *cell = c->GetFirstChild(); cell; cell = cell->GetNext() )
+    {
+        if ( !cell->IsTerminalCell() || !cell->IsFormattingCell() )
+            return true;
+    }
+
+    return false;
+}
 
 TAG_HANDLER_BEGIN(P, "P")
     TAG_HANDLER_CONSTR(P) { }
 
     TAG_HANDLER_PROC(tag)
     {
-        if (m_WParser->GetContainer()->GetFirstChild() != nullptr)
+        if (m_WParser->GetContainer()->GetFirstChild() != nullptr ||
+                m_WParser->GetContainer()->HasId())
         {
             m_WParser->CloseContainer();
             m_WParser->OpenContainer();
         }
+        m_WParser->GetContainer()->CopyId(tag);
         m_WParser->GetContainer()->SetIndent(m_WParser->GetCharHeight(), wxHTML_INDENT_TOP);
         m_WParser->GetContainer()->SetAlign(tag);
         return false;
@@ -115,13 +143,29 @@ TAG_HANDLER_BEGIN(BR, "BR")
     TAG_HANDLER_PROC(tag)
     {
         int al = m_WParser->GetContainer()->GetAlignHor();
-        wxHtmlContainerCell *c;
+        wxHtmlContainerCell *c = m_WParser->GetContainer();
 
-        m_WParser->CloseContainer();
-        c = m_WParser->OpenContainer();
+        if ( !HasLayoutContent(c) && !c->HasId() )
+        {
+            c->CopyId(tag);
+            c->SetAlignHor(al);
+            c->SetAlign(tag);
+            c->InsertCell(
+                new wxHtmlLineBreakCell(tag, m_WParser->GetCharHeight()));
+
+            m_WParser->CloseContainer();
+            c = m_WParser->OpenContainer();
+        }
+        else
+        {
+            m_WParser->CloseContainer();
+            c = m_WParser->OpenContainer();
+            c->CopyId(tag);
+            c->SetMinHeight(m_WParser->GetCharHeight());
+        }
+
         c->SetAlignHor(al);
         c->SetAlign(tag);
-        c->SetMinHeight(m_WParser->GetCharHeight());
         return false;
     }
 
@@ -138,7 +182,7 @@ TAG_HANDLER_BEGIN(CENTER, "CENTER")
         wxHtmlContainerCell *c = m_WParser->GetContainer();
 
         m_WParser->SetAlign(wxHTML_ALIGN_CENTER);
-        if (c->GetFirstChild() != nullptr)
+        if (c->GetFirstChild() != nullptr || c->HasId())
         {
             m_WParser->CloseContainer();
             m_WParser->OpenContainer();
@@ -151,7 +195,7 @@ TAG_HANDLER_BEGIN(CENTER, "CENTER")
             ParseInner(tag);
 
             m_WParser->SetAlign(old);
-            if (c->GetFirstChild() != nullptr)
+            if (c->GetFirstChild() != nullptr || c->HasId())
             {
                 m_WParser->CloseContainer();
                 m_WParser->OpenContainer();
@@ -179,7 +223,7 @@ TAG_HANDLER_BEGIN(DIV, "DIV")
             if(style.IsSameAs(wxT("PAGE-BREAK-BEFORE:ALWAYS"), false))
             {
                 m_WParser->CloseContainer();
-                m_WParser->OpenContainer()->InsertCell(new wxHtmlPageBreakCell);
+                m_WParser->OpenContainer()->InsertCell(new wxHtmlPageBreakCell(tag));
                 m_WParser->CloseContainer();
                 m_WParser->OpenContainer();
                 return false;
@@ -188,13 +232,14 @@ TAG_HANDLER_BEGIN(DIV, "DIV")
             {
                 // As usual, reuse the current container if it's empty.
                 wxHtmlContainerCell *c = m_WParser->GetContainer();
-                if (c->GetFirstChild() != nullptr)
+                if (c->GetFirstChild() != nullptr || c->HasId())
                 {
                     // If not, open a new one.
                     m_WParser->CloseContainer();
                     c = m_WParser->OpenContainer();
                 }
 
+                c->CopyId(tag);
                 // Force this container to live entirely on the same page.
                 c->SetCanLiveOnPagebreak(false);
 
@@ -223,7 +268,7 @@ TAG_HANDLER_BEGIN(DIV, "DIV")
         {
             int old = m_WParser->GetAlign();
             wxHtmlContainerCell *c = m_WParser->GetContainer();
-            if (c->GetFirstChild() != nullptr)
+            if (c->GetFirstChild() != nullptr || c->HasId())
             {
                 m_WParser->CloseContainer();
                 m_WParser->OpenContainer();
@@ -236,11 +281,12 @@ TAG_HANDLER_BEGIN(DIV, "DIV")
                 c->SetAlign(tag);
                 m_WParser->SetAlign(c->GetAlignHor());
             }
+            c->CopyId(tag);
 
             ParseInner(tag);
 
             m_WParser->SetAlign(old);
-            if (c->GetFirstChild() != nullptr)
+            if (c->GetFirstChild() != nullptr || c->HasId())
             {
                 m_WParser->CloseContainer();
                 m_WParser->OpenContainer();
@@ -258,6 +304,7 @@ TAG_HANDLER_BEGIN(DIV, "DIV")
 
             m_WParser->CloseContainer();
             c = m_WParser->OpenContainer();
+            c->CopyId(tag);
             c->SetAlignHor(al);
             c->SetAlign(tag);
             c->SetMinHeight(m_WParser->GetCharHeight());
@@ -307,34 +354,39 @@ TAG_HANDLER_BEGIN(BODY, "BODY")
         if (tag.GetParamAsColour(wxT("LINK"), &clr))
             m_WParser->SetLinkColor(clr);
 
-        wxHtmlWindowInterface *winIface = m_WParser->GetWindowInterface();
-        // the rest of this function requires a window:
-        if ( !winIface )
-            return false;
-
-        wxString bg;
-        if (tag.GetParamAsString(wxT("BACKGROUND"), &bg))
+        const bool hasBgColour = tag.GetParamAsColour("BGCOLOR", &clr);
+        if ( hasBgColour )
         {
-            wxFSFile *fileBgImage = m_WParser->OpenURL(wxHTML_URL_IMAGE, bg);
-            if ( fileBgImage )
-            {
-                wxInputStream *is = fileBgImage->GetStream();
-                if ( is )
-                {
-                    wxImage image(*is);
-                    if ( image.IsOk() )
-                        winIface->SetHTMLBackgroundImage(image);
-                }
-
-                delete fileBgImage;
-            }
-        }
-
-        if (tag.GetParamAsColour(wxT("BGCOLOR"), &clr))
-        {
+            m_WParser->SetActualBackgroundColor(clr);
+            m_WParser->SetActualBackgroundMode(wxBRUSHSTYLE_TRANSPARENT);
             m_WParser->GetContainer()->InsertCell(
                 new wxHtmlColourCell(clr, wxHTML_CLR_TRANSPARENT_BACKGROUND));
-            winIface->SetHTMLBackgroundColour(clr);
+        }
+
+        wxHtmlWindowInterface *winIface = m_WParser->GetWindowInterface();
+        if ( winIface )
+        {
+            if ( hasBgColour )
+                winIface->SetHTMLBackgroundColour(clr);
+
+            wxString bg;
+            if (tag.GetParamAsString("BACKGROUND", &bg))
+            {
+                wxFSFile *fileBgImage =
+                    m_WParser->OpenURL(wxHTML_URL_IMAGE, bg);
+                if ( fileBgImage )
+                {
+                    wxInputStream *is = fileBgImage->GetStream();
+                    if ( is )
+                    {
+                        wxImage image(*is);
+                        if ( image.IsOk() )
+                            winIface->SetHTMLBackgroundImage(image);
+                    }
+
+                    delete fileBgImage;
+                }
+            }
         }
 
         return false;
@@ -354,6 +406,7 @@ TAG_HANDLER_BEGIN(BLOCKQUOTE, "BLOCKQUOTE")
         m_WParser->CloseContainer();
         c = m_WParser->OpenContainer();
 
+        c->CopyId(tag);
         if (c->GetAlignHor() == wxHTML_ALIGN_RIGHT)
             c->SetIndent(5 * m_WParser->GetCharWidth(), wxHTML_INDENT_RIGHT);
         else

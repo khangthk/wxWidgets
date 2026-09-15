@@ -60,7 +60,7 @@ enum
 class FontPickerWidgetsPage : public WidgetsPage
 {
 public:
-    FontPickerWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist);
+    FontPickerWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist);
 
     virtual wxWindow *GetWidget() const override { return m_fontPicker; }
     virtual void RecreateWidget() override { RecreatePicker(); }
@@ -127,7 +127,7 @@ IMPLEMENT_WIDGETS_PAGE(FontPickerWidgetsPage, "FontPicker",
                        PICKER_CTRLS | FAMILY_CTRLS);
 
 FontPickerWidgetsPage::FontPickerWidgetsPage(WidgetsBookCtrl *book,
-                                     wxImageList *imaglist)
+                                     wxVector<wxBitmapBundle>& imaglist)
                   : WidgetsPage(book, imaglist, fontpicker_xpm)
 {
 }
@@ -142,10 +142,10 @@ void FontPickerWidgetsPage::CreateContent()
     m_chkFontTextCtrl = CreateCheckBoxAndAddToSizer(styleSizer, "With textctrl", wxID_ANY, styleSizerBox);
     m_chkFontDescAsLabel = CreateCheckBoxAndAddToSizer(styleSizer, "Font desc as btn label", wxID_ANY, styleSizerBox);
     m_chkFontUseFontForLabel = CreateCheckBoxAndAddToSizer(styleSizer, "Use font for label", wxID_ANY, styleSizerBox);
-    leftSizer->Add(styleSizer, 0, wxALL|wxGROW, 5);
+    leftSizer->Add(styleSizer, wxSizerFlags().Expand().Border());
 
     leftSizer->Add(new wxButton(this, PickerPage_Reset, "&Reset"),
-                 0, wxALIGN_CENTRE_HORIZONTAL | wxALL, 15);
+                 wxSizerFlags().CentreHorizontal().TripleBorder());
 
     Reset();    // set checkboxes state
 
@@ -155,14 +155,14 @@ void FontPickerWidgetsPage::CreateContent()
 
     // right pane
     m_sizer = new wxBoxSizer(wxVERTICAL);
-    m_sizer->Add(1, 1, 1, wxGROW | wxALL, 5); // spacer
-    m_sizer->Add(m_fontPicker, 0, wxALIGN_CENTER|wxALL, 5);
-    m_sizer->Add(1, 1, 1, wxGROW | wxALL, 5); // spacer
+    m_sizer->AddStretchSpacer();
+    m_sizer->Add(m_fontPicker, wxSizerFlags().Centre().Border());
+    m_sizer->AddStretchSpacer();
 
     // global pane
     wxSizer *sz = new wxBoxSizer(wxHORIZONTAL);
-    sz->Add(leftSizer, 0, wxGROW|wxALL, 5);
-    sz->Add(m_sizer, 1, wxGROW|wxALL, 5);
+    sz->Add(leftSizer, wxSizerFlags().Expand().Border());
+    sz->Add(m_sizer, wxSizerFlags(1).Expand().Border());
 
     SetSizer(sz);
 }
@@ -194,7 +194,7 @@ void FontPickerWidgetsPage::RecreatePicker()
 {
     m_sizer->Remove(1);
     CreatePicker();
-    m_sizer->Insert(1, m_fontPicker, 0, wxALIGN_CENTER|wxALL, 5);
+    m_sizer->Insert(1, m_fontPicker, wxSizerFlags().Centre().Border());
 
     m_sizer->Layout();
 }
@@ -219,8 +219,10 @@ void FontPickerWidgetsPage::OnButtonReset(wxCommandEvent& WXUNUSED(event))
 
 void FontPickerWidgetsPage::OnFontChange(wxFontPickerEvent& event)
 {
-    wxLogMessage("The font changed to '%s' with size %d !",
-                 event.GetFont().GetFaceName(), event.GetFont().GetPointSize());
+    wxLogMessage("The font changed to '%s' with size %d, style %s, weight %d !",
+                 event.GetFont().GetFaceName(), event.GetFont().GetPointSize(),
+                 event.GetFont().GetStyle() == wxFONTSTYLE_NORMAL ? "regular" : "italic",
+                 event.GetFont().GetNumericWeight());
 }
 
 void FontPickerWidgetsPage::OnCheckBox(wxCommandEvent &event)

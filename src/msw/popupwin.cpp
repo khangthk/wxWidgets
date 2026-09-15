@@ -22,6 +22,7 @@
 #if wxUSE_POPUPWIN
 
 #ifndef WX_PRECOMP
+    #include "wx/app.h"
 #endif //WX_PRECOMP
 
 #include "wx/popupwin.h"
@@ -169,7 +170,39 @@ bool wxPopupWindow::Show(bool show)
             }
 
             // and set it as the foreground window so the mouse can be captured
-            ::SetForegroundWindow(GetHwnd());
+
+            // But if another application is in the foreground, don't take the
+            // foreground away from the other application: usually Windows
+            // would prevent this from working, but it can be configured to
+            // allow it and we shouldn't do it in this case, see #26740.
+            bool canBecomeForeground = false;
+            HWND hwnd = ::GetForegroundWindow();
+            if ( hwnd )
+            {
+                DWORD foregroundProcessId = 0;
+                if ( ::GetWindowThreadProcessId(hwnd, &foregroundProcessId) )
+                {
+                    if ( foregroundProcessId == ::GetCurrentProcessId() )
+                        canBecomeForeground = true;
+                }
+                else
+                {
+                    wxLogLastError(wxT("GetWindowThreadProcessId"));
+                }
+            }
+            else
+            {
+                // Not having any foreground window is not an error and we
+                // consider that if nothing else is in the foreground, this
+                // window can become foreground one it without stealing focus
+                // from another application.
+                canBecomeForeground = true;
+            }
+
+            if ( canBecomeForeground )
+            {
+                ::SetForegroundWindow(GetHwnd());
+            }
         }
 
         return true;
@@ -238,6 +271,14 @@ wxPopupTransientWindow::MSWHandleMessage(WXLRESULT *result,
         case WM_ACTIVATE:
             if ( wParam == WA_INACTIVE )
             {
+                if ( wxTheApp->IsScheduledForDestruction(this) )
+                {
+                    // It is possible that we get this message again after
+                    // already getting it once, avoid scheduling the window for
+                    // destruction again in this case.
+                    break;
+                }
+
                 // We need to dismiss this window, however doing it directly
                 // from here seems to confuse ::ShowWindow(), which ends up
                 // calling this handler, and may result in losing activation

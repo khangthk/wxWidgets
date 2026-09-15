@@ -155,6 +155,7 @@ bool wxFSWatcherImplMSW::DoSetUpWatch(wxFSWatchEntryMSW& watch)
     }
 
     int flags = Watcher2NativeFlags(watch.GetFlags());
+    ::ResetEvent(watch.GetOverlapped()->hEvent);
     int ret = ReadDirectoryChangesW(watch.GetHandle(), watch.GetBuffer(),
                                     wxFSWatchEntryMSW::BUFFER_SIZE,
                                     bWatchSubtree,
@@ -230,6 +231,9 @@ bool wxIOCPThread::ReadEvents()
             return true; // error was logged already, we don't want to exit
 
         case wxIOCPService::Status_Deleted:
+            if ( m_iocp->CompleteRemoval(watch) )
+                return true;
+
             {
                 wxFileSystemWatcherEvent
                     removeEvent(wxFSW_EVENT_DELETE,
@@ -247,6 +251,11 @@ bool wxIOCPThread::ReadEvents()
         case wxIOCPService::Status_Exit:
             return false; // stop reading events
     }
+
+    // First check if we're still interested in this watch, we could have
+    // removed it in the meanwhile.
+    if ( watch && m_iocp->CompleteRemoval(watch) )
+        return true;
 
     // if the thread got woken up but we got an empty packet it means that
     // there was an overflow, too many events and not all could fit in
@@ -278,11 +287,6 @@ bool wxIOCPThread::ReadEvents()
     wxLogTrace( wxTRACE_FSWATCHER, "[iocp] Read entry: path='%s'",
                 watch->GetPath());
 
-    // First check if we're still interested in this watch, we could have
-    // removed it in the meanwhile.
-    if ( m_iocp->CompleteRemoval(watch) )
-        return true;
-
     // extract events from buffer info our vector container
     wxVector<wxEventProcessingData> events;
     const char* memory = static_cast<const char*>(watch->GetBuffer());
@@ -302,6 +306,9 @@ bool wxIOCPThread::ReadEvents()
     // process events
     ProcessNativeEvents(events);
 
+    if ( m_iocp->CompleteRemoval(watch) )
+        return true;
+
     // reissue the watch. ignore possible errors, we will return true anyway
     (void) m_service->SetUpWatch(*watch);
 
@@ -319,24 +326,15 @@ void wxIOCPThread::ProcessNativeEvents(wxVector<wxEventProcessingData>& events)
         wxLogTrace( wxTRACE_FSWATCHER, "[iocp] %s",
                     FileNotifyInformationToString(e));
 
-        int nativeFlags = e.Action;
-        int flags = Native2WatcherFlags(nativeFlags);
-        if (flags & wxFSW_EVENT_WARNING || flags & wxFSW_EVENT_ERROR)
-        {
-            wxFileSystemWatcherEvent
-                event(flags,
-                      flags & wxFSW_EVENT_ERROR ? wxFSW_WARNING_NONE
-                                                : wxFSW_WARNING_GENERAL);
-            SendEvent(event);
-        }
-        // filter out ignored events and those not asked for.
-        // we never filter out warnings or exceptions
-        else if ((flags == 0) || !(flags & watch->GetFlags()))
+        const int flags = Native2WatcherFlags(e.Action);
+        // filter out ignored events (with flags == 0) and those not asked for.
+        if (!(flags & watch->GetFlags()))
         {
             return;
         }
+
         // rename case
-        else if (nativeFlags == FILE_ACTION_RENAMED_OLD_NAME)
+        if (e.Action == FILE_ACTION_RENAMED_OLD_NAME)
         {
             wxFileName oldpath = GetEventPath(*watch, e);
             wxFileName newpath;
@@ -387,8 +385,6 @@ int wxIOCPThread::Native2WatcherFlags(int flags)
 
         // ignored as it should always be matched with ***_OLD_NAME
         { FILE_ACTION_RENAMED_NEW_NAME, 0 },
-        // ignore invalid event
-        { 0, 0 },
     };
 
     for (unsigned int i=0; i < WXSIZEOF(flag_mapping); ++i) {
@@ -396,9 +392,9 @@ int wxIOCPThread::Native2WatcherFlags(int flags)
             return flag_mapping[i][1];
     }
 
-    // never reached
-    wxFAIL_MSG(wxString::Format("Unknown file notify change %u", flags));
-    return -1;
+    // We can get unknown values here, see #18953, just ignore them because we
+    // don't know what else to do with them.
+    return 0;
 }
 
 wxString wxIOCPThread::FileNotifyInformationToString(

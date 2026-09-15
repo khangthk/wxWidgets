@@ -64,7 +64,7 @@ enum
 class FileCtrlWidgetsPage : public WidgetsPage
 {
 public:
-    FileCtrlWidgetsPage( WidgetsBookCtrl *book, wxImageList *imaglist );
+    FileCtrlWidgetsPage( WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist );
     virtual ~FileCtrlWidgetsPage() {}
 
     virtual wxWindow *GetWidget() const override { return m_fileCtrl; }
@@ -146,7 +146,7 @@ IMPLEMENT_WIDGETS_PAGE( FileCtrlWidgetsPage, "FileCtrl",
                         FAMILY_CTRLS );
 
 FileCtrlWidgetsPage::FileCtrlWidgetsPage( WidgetsBookCtrl *book,
-        wxImageList *imaglist )
+        wxVector<wxBitmapBundle>& imaglist )
         : WidgetsPage( book, imaglist, dirctrl_xpm )
 {
 }
@@ -164,14 +164,14 @@ void FileCtrlWidgetsPage::CreateContent()
                                           WXSIZEOF( mode ), mode );
 
     sizerLeft->Add( m_radioFileCtrlMode,
-                    0, wxALL | wxEXPAND , 5 );
+                    wxSizerFlags().Expand().Border());
 
     sizerLeft->Add( CreateSizerWithTextAndButton( FileCtrlPage_SetDirectory , "Set &directory", wxID_ANY, &m_dir ),
-                    0, wxALL | wxEXPAND , 5 );
+                    wxSizerFlags().Expand().Border());
     sizerLeft->Add( CreateSizerWithTextAndButton( FileCtrlPage_SetPath , "Set &path", wxID_ANY, &m_path ),
-                    0, wxALL | wxEXPAND , 5 );
+                    wxSizerFlags().Expand().Border());
     sizerLeft->Add( CreateSizerWithTextAndButton( FileCtrlPage_SetFilename , "Set &filename", wxID_ANY, &m_filename ),
-                    0, wxALL | wxEXPAND , 5 );
+                    wxSizerFlags().Expand().Border());
 
     wxStaticBoxSizer *sizerFlags = new wxStaticBoxSizer( wxVERTICAL, this, "&Flags");
     wxStaticBox* const sizerFlagsBox = sizerFlags->GetStaticBox();
@@ -190,7 +190,7 @@ void FileCtrlWidgetsPage::CreateContent()
     sizerLeft->Add( sizerFilters, wxSizerFlags().Expand().Border() );
 
     wxButton *btn = new wxButton( this, FileCtrlPage_Reset, "&Reset" );
-    sizerLeft->Add( btn, 0, wxALIGN_CENTRE_HORIZONTAL | wxALL, 15 );
+    sizerLeft->Add( btn, wxSizerFlags().CentreHorizontal().TripleBorder() );
 
     // right pane
     m_fileCtrl = new wxFileCtrl(
@@ -205,8 +205,8 @@ void FileCtrlWidgetsPage::CreateContent()
                  );
 
     // the 3 panes panes compose the window
-    sizerTop->Add( sizerLeft, 0, ( wxALL & ~wxLEFT ), 10 );
-    sizerTop->Add( m_fileCtrl, 1, wxGROW | ( wxALL & ~wxRIGHT ), 10 );
+    sizerTop->Add( sizerLeft, wxSizerFlags().DoubleBorder(wxALL & ~wxLEFT) );
+    sizerTop->Add( m_fileCtrl, wxSizerFlags(1).Expand().DoubleBorder(wxALL & ~wxRIGHT) );
 
     // final initializations
     Reset();

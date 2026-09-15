@@ -33,6 +33,32 @@ wxStaticText::wxStaticText(wxWindow *parent,
              const wxString &name)
 {
     Create( parent, id, label, pos, size, style, name );
+
+    // to allow dynamic ellipsizing of the label.
+    Bind(wxEVT_SIZE, [this](wxSizeEvent& event)
+        {
+            event.Skip();
+
+            UpdateLabel();
+        });
+}
+
+wxStaticText::~wxStaticText()
+{
+    // Dissociate the buddy before QLabel get destroyed to avoid this assertion:
+    //
+    // ASSERT failure in QLabel: "Called object is not of the correct type (class
+    // destructor may have already run)", file...
+    //
+    // Explanation:
+    // ------------
+    // When setBuddy() is called to set the buddy (see Create() below), Qt (internally)
+    // connects the QLabel to the QObject::destroyed() signal to be notified of the
+    // buddy's destruction and to dissociate it. Since the QLabel and its buddy are
+    // the same object, setBuddy() will be called on an already destroyed object, producing
+    // the aforementioned assertion message.
+
+    GetQLabel()->setBuddy( nullptr );
 }
 
 bool wxStaticText::Create(wxWindow *parent,
@@ -73,17 +99,43 @@ QLabel* wxStaticText::GetQLabel() const
 void wxStaticText::SetLabel(const wxString& label)
 {
     // If the label doesn't really change, avoid flicker by not doing anything.
-    if ( label == m_labelOrig )
+    if ( !UpdateLabelOrig(label) )
         return;
-
-    // save the label in m_labelOrig with both the markup (if any) and
-    // the mnemonics characters (if any)
-    m_labelOrig = label;
 
     WXSetVisibleLabel(GetEllipsizedLabel());
 
     AutoResizeIfNecessary();
 }
+
+#if wxUSE_MARKUP
+
+bool wxStaticText::DoSetLabelMarkup(const wxString& markup)
+{
+    const wxString stripped = RemoveMarkup(markup);
+    if ( stripped.empty() && !markup.empty() )
+        return false;
+
+    if ( !UpdateLabelOrig(stripped) )
+        return false;
+
+    // Tell the QLabel not to call Qt::mightBeRichText() and interpret
+    // the string as a rich text string.
+    GetQLabel()->setTextFormat(Qt::RichText);
+
+    // To prevent QLabel from collapsing multiple spaces when in Qt::RichText
+    // mode, we use the CSS white-space property with pre-wrap option which
+    // preserves spaces and newlines, wraps (naturally) when needed (no need
+    // to convert \n to <br>).
+    auto richText = markup;
+    richText.Prepend("<div style='white-space: pre-wrap;'>");
+    richText.Append("</div>");
+
+    WXSetVisibleLabel(richText);
+
+    return true;
+}
+
+#endif // wxUSE_MARKUP
 
 void wxStaticText::WXSetVisibleLabel(const wxString& label)
 {

@@ -18,6 +18,7 @@
 #include "wx/webview.h"
 
 class wxWebViewEdgeImpl;
+struct ICoreWebView2PrintSettings;
 
 class WXDLLIMPEXP_WEBVIEW wxWebViewEdge : public wxWebView
 {
@@ -68,6 +69,15 @@ public:
     virtual bool CanSetZoomType(wxWebViewZoomType type) const override;
 
     virtual void Print() override;
+#if wxUSE_PRINTING_ARCHITECTURE
+    virtual void Print(const wxPrintData& printData, int flags = wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER) override;
+    using wxWebView::Print;
+#endif
+
+    virtual bool PrintToPDF(const wxString& filePath) override;
+#if wxUSE_PRINTING_ARCHITECTURE
+    virtual bool PrintToPDF(const wxString& filePath, const wxPrintData& printData) override;
+#endif
 
     virtual float GetZoomFactor() const override;
     virtual void SetZoomFactor(float zoom) override;
@@ -97,6 +107,9 @@ public:
 
     virtual bool SetProxy(const wxString& proxy) override;
 
+    virtual bool ClearBrowsingData(int types = wxWEBVIEW_BROWSING_DATA_ALL,
+                                   wxDateTime since = {}) override;
+
     virtual bool RunScript(const wxString& javascript, wxString* output = nullptr) const override;
     virtual void RunScriptAsync(const wxString& javascript, void* clientData = nullptr) const override;
     virtual bool AddScriptMessageHandler(const wxString& name) override;
@@ -117,11 +130,15 @@ protected:
 private:
     wxWebViewEdgeImpl* m_impl;
 
+    bool DoCallPrintToPdf(const wxString& filePath, ICoreWebView2PrintSettings* printSettings);
+
     void OnSize(wxSizeEvent& event);
 
     void OnSetFocus(wxFocusEvent& event);
 
     void OnTopLevelParentIconized(wxIconizeEvent& event);
+
+    void OnShow(wxShowEvent& event);
 
     wxDECLARE_DYNAMIC_CLASS(wxWebViewEdge);
 

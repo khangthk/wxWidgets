@@ -120,8 +120,7 @@ enum wxEndianness
 };
 
 /**
-    A structure containing information about a Linux distribution as returned
-    by the @c lsb_release utility.
+    A structure containing information about a Linux distribution.
 
     See wxGetLinuxDistributionInfo() or wxPlatformInfo::GetLinuxDistributionInfo()
     for more info.
@@ -132,6 +131,18 @@ struct wxLinuxDistributionInfo
     wxString Release;           //!< The version of the distribution; e.g. "9.04"
     wxString CodeName;          //!< The code name of the distribution; e.g. "jaunty"
     wxString Description;       //!< The description of the distribution; e.g. "Ubuntu 9.04"
+    /**
+        The parent distribution name; e.g. "ubuntu debian".
+
+        @since 3.3.3
+    */
+    wxString ParentName;
+    /**
+        The upstream release codename; e.g. "noble".
+
+        @since 3.3.3
+    */
+    wxString ParentCodeName;
 
     bool operator==(const wxLinuxDistributionInfo& ldi) const;
     bool operator!=(const wxLinuxDistributionInfo& ldi) const;
@@ -270,6 +281,11 @@ public:
     /**
         Returns the global wxPlatformInfo object, initialized with the values
         for the currently running platform.
+
+        Note that this function is thread-safe, i.e. it can be called
+        concurrently from multiple threads without locking (unless wxWidgets
+        was compiled without threads support, i.e. with @c wxUSE_THREADS
+        changed to be 0).
     */
     static const wxPlatformInfo& Get();
 

@@ -5,6 +5,7 @@
 // Modified by: Santiago Palacios
 // Created:     1/08/1999
 // Copyright:   (c) Michael Bedward
+//              (c) 2026 wxWidgets development team
 // Licence:     wxWindows licence
 /////////////////////////////////////////////////////////////////////////////
 
@@ -247,7 +248,7 @@ public:
     }
 
     // create a new object which is the copy of this one
-    virtual wxGridCellRenderer *Clone() const = 0;
+    wxNODISCARD virtual wxGridCellRenderer *Clone() const = 0;
 
 
     // These functions still exist for compatibility and are the ones actually
@@ -504,7 +505,7 @@ public:
     virtual void Destroy();
 
     // create a new object which is the copy of this one
-    virtual wxGridCellEditor *Clone() const = 0;
+    wxNODISCARD virtual wxGridCellEditor *Clone() const = 0;
 
     // added GetValue so we can get the value which is in the control
     virtual wxString GetValue() const = 0;
@@ -821,7 +822,7 @@ public:
     }
 
     // creates a new copy of this object
-    wxGridCellAttr *Clone() const;
+    wxNODISCARD wxGridCellAttr *Clone() const;
     void MergeWith(wxGridCellAttr *mergefrom);
 
     // setters
@@ -1459,7 +1460,7 @@ public:
 
     // these are pure virtual in wxGridTableBase
     //
-    virtual int GetNumberRows() override { return static_cast<int>(m_data.size()); }
+    virtual int GetNumberRows() override { return wxSsize(m_data); }
     virtual int GetNumberCols() override { return m_numCols; }
     virtual wxString GetValue( int row, int col ) override;
     virtual void SetValue( int row, int col, const wxString& s ) override;
@@ -1932,10 +1933,10 @@ public:
     wxString GetColLabelValue( int col ) const;
     wxString GetCornerLabelValue() const;
 
-    wxColour GetCellHighlightColour() const { return m_cellHighlightColour; }
+    wxColour GetCellHighlightColour() const;
     int      GetCellHighlightPenWidth() const { return m_cellHighlightPenWidth; }
     int      GetCellHighlightROPenWidth() const { return m_cellHighlightROPenWidth; }
-    wxColor  GetGridFrozenBorderColour() const { return m_gridFrozenBorderColour; }
+    wxColor  GetGridFrozenBorderColour() const;
     int      GetGridFrozenBorderPenWidth() const { return m_gridFrozenBorderPenWidth; }
 
     // this one will use wxHeaderCtrl for the column labels
@@ -2072,7 +2073,7 @@ public:
 
     // this can be used to change the global grid lines colour
     void SetGridLineColour(const wxColour& col);
-    wxColour GetGridLineColour() const { return m_gridLineColour; }
+    wxColour GetGridLineColour() const;
 
     // these methods may be overridden to customize individual grid lines
     // appearance
@@ -2420,10 +2421,8 @@ public:
                            const wxRect& renderExtent) const;
 
     // Access or update the selection fore/back colours
-    wxColour GetSelectionBackground() const
-        { return m_selectionBackground; }
-    wxColour GetSelectionForeground() const
-        { return m_selectionForeground; }
+    wxColour GetSelectionBackground() const;
+    wxColour GetSelectionForeground() const;
 
     void SetSelectionBackground(const wxColour& c) { m_selectionBackground = c; }
     void SetSelectionForeground(const wxColour& c) { m_selectionForeground = c; }
@@ -2456,6 +2455,8 @@ public:
     wxWindow* GetFrozenCornerGridWindow()const { return (wxWindow*)m_frozenCornerGridWin; }
     wxWindow* GetFrozenRowGridWindow() const   { return (wxWindow*)m_frozenRowGridWin; }
     wxWindow* GetFrozenColGridWindow() const   { return (wxWindow*)m_frozenColGridWin; }
+    wxWindow* GetFrozenRowLabelWindow() const  { return (wxWindow*)m_rowFrozenLabelWin; }
+    wxWindow* GetFrozenColLabelWindow() const  { return m_colFrozenLabelWin; }
     wxWindow* GetGridRowLabelWindow() const    { return (wxWindow*)m_rowLabelWin; }
     wxWindow* GetGridColLabelWindow() const    { return m_colLabelWin; }
     wxWindow* GetGridCornerLabelWindow() const { return (wxWindow*)m_cornerLabelWin; }
@@ -2825,6 +2826,9 @@ protected:
     bool       m_editable;              // applies to whole grid
     bool       m_cellEditCtrlEnabled;   // is in-place edit currently shown?
 
+    // Editor used by the currently active edit control.
+    wxGridCellEditorPtr m_activeCellEditor;
+
     TabBehaviour m_tabBehaviour;        // determines how the TAB key behaves
 
     void Init();        // common part of all ctors
@@ -2912,6 +2916,9 @@ private:
     // Event handler for DPI change event recomputes pixel values and relays
     // out the grid.
     void OnDPIChanged(wxDPIChangedEvent& event);
+
+    void OnSysColourChanged(wxSysColourChangedEvent& event);
+    void UpdateColours();
 
     // implement wxScrolledCanvas method to return m_gridWin size
     virtual wxSize GetSizeAvailableForScrollTarget(const wxSize& size) override;
@@ -3168,12 +3175,33 @@ private:
                 );
     }
 
+    // Return the editor actually being used by the current edit control.
+    wxGridCellEditorPtr GetActiveCellEditorPtr() const
+    {
+        if ( m_activeCellEditor )
+            return m_activeCellEditor;
+
+        return GetCurrentCellEditorPtr();
+    }
+
     // Show/hide the cell editor for the current cell unconditionally.
 
     // Return false if the editor was activated instead of being shown and also
     // sets m_cellEditCtrlEnabled to true when it returns true as a side effect.
     bool DoShowCellEditControl(const wxGridActivationSource& actSource);
     void DoHideCellEditControl();
+
+    // Reposition the cell editor if it is currently shown.
+    void RepositionCellEditControlIfNecessary();
+
+    // DoShowCellEditControl() and RepositionCellEditControlIfNecessary() use
+    // this function to really position the editor control.
+    void PositionCellEditControl(wxGridCellEditor* editor,
+                                 wxGridCellAttr* attr,
+                                 wxGridWindow* gridWindow,
+                                 int row,
+                                 int col,
+                                 wxRect rect);
 
     // Unconditionally try showing the editor for the current cell.
     //
@@ -3200,6 +3228,12 @@ private:
     // elements (which is the default)
     wxGridFixedIndicesSet *m_setFixedRows,
                           *m_setFixedCols;
+
+    // Whether background and text colours were set by the user.
+    bool m_hasUserCellBg = false;
+    bool m_hasUserCellFg = false;
+    bool m_hasUserLabelBg = false;
+    bool m_hasUserLabelFg = false;
 
     wxDECLARE_DYNAMIC_CLASS(wxGrid);
     wxDECLARE_EVENT_TABLE();
@@ -3289,12 +3323,17 @@ public:
 
     int GetRow() const { return m_row; }
     int GetCol() const { return m_col; }
+
+    // Note that GetNewRow() intentionally returns m_col, which is used for the
+    // new row for wxEVT_GRID_ROW_MOVE events because m_row is used for the row
+    // being moved. And similarly for GetNewCol().
     int GetNewRow() const { return m_col; }
     int GetNewCol() const { return m_row; }
+
     wxPoint GetPosition() const { return wxPoint( m_x, m_y ); }
     bool Selecting() const { return m_selecting; }
 
-    virtual wxEvent *Clone() const override { return new wxGridEvent(*this); }
+    wxNODISCARD virtual wxEvent *Clone() const override { return new wxGridEvent(*this); }
 
 protected:
     int         m_row;
@@ -3354,7 +3393,7 @@ public:
     int GetRowOrCol() const { return m_rowOrCol; }
     wxPoint GetPosition() const { return wxPoint( m_x, m_y ); }
 
-    virtual wxEvent *Clone() const override { return new wxGridSizeEvent(*this); }
+    wxNODISCARD virtual wxEvent *Clone() const override { return new wxGridSizeEvent(*this); }
 
 protected:
     int         m_rowOrCol;
@@ -3418,7 +3457,7 @@ public:
     int GetRightCol() const { return m_bottomRight.GetCol(); }
     bool Selecting() const { return m_selecting; }
 
-    virtual wxEvent *Clone() const override { return new wxGridRangeSelectEvent(*this); }
+    wxNODISCARD virtual wxEvent *Clone() const override { return new wxGridRangeSelectEvent(*this); }
 
 protected:
     void Init(const wxGridCellCoords& topLeft,
@@ -3464,7 +3503,7 @@ public:
     wxControl* GetControl()             { return wxDynamicCast(m_window, wxControl); }
     void SetControl(wxControl* ctrl)    { m_window = ctrl; }
 
-    virtual wxEvent *Clone() const override { return new wxGridEditorCreatedEvent(*this); }
+    wxNODISCARD virtual wxEvent *Clone() const override { return new wxGridEditorCreatedEvent(*this); }
 
 private:
     int m_row;

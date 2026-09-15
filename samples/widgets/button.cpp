@@ -87,7 +87,7 @@ enum
 class ButtonWidgetsPage : public WidgetsPage
 {
 public:
-    ButtonWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist);
+    ButtonWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist);
 
     virtual wxWindow *GetWidget() const override { return m_button; }
     virtual void RecreateWidget() override { CreateButton(); }
@@ -112,7 +112,7 @@ protected:
     void CreateButton();
 
     // helper function: create a bitmap bundle for wxBitmapButton
-    wxBitmapBundle CreateBitmap(const wxString& label, const wxArtID& type);
+    wxBitmapBundle CreateBitmap(const wxArtID& type);
 
 
     // the controls
@@ -130,8 +130,7 @@ protected:
                *m_chkUseMarkup,
 #endif // wxUSE_MARKUP
                *m_chkDefault,
-               *m_chkUseBitmapClass,
-               *m_chkDisable;
+               *m_chkUseBitmapClass;
 
     // more checkboxes for wxBitmapButton only
     wxCheckBox *m_chkUsePressed,
@@ -206,7 +205,7 @@ wxEND_EVENT_TABLE()
 IMPLEMENT_WIDGETS_PAGE(ButtonWidgetsPage, "Button", FAMILY_CTRLS );
 
 ButtonWidgetsPage::ButtonWidgetsPage(WidgetsBookCtrl *book,
-                                     wxImageList *imaglist)
+                                     wxVector<wxBitmapBundle>& imaglist)
                   : WidgetsPage(book, imaglist, button_xpm)
 {
     // init everything
@@ -222,7 +221,6 @@ ButtonWidgetsPage::ButtonWidgetsPage(WidgetsBookCtrl *book,
 #endif // wxUSE_MARKUP
     m_chkDefault =
     m_chkUseBitmapClass =
-    m_chkDisable =
     m_chkUsePressed =
     m_chkUseFocused =
     m_chkUseCurrent =
@@ -268,9 +266,7 @@ void ButtonWidgetsPage::CreateContent()
         "Use wxBitmapButton", wxID_ANY, sizerLeftBox);
     m_chkUseBitmapClass->SetValue(true);
 
-    m_chkDisable = CreateCheckBoxAndAddToSizer(sizerLeft, "Disable", wxID_ANY, sizerLeftBox);
-
-    sizerLeft->AddSpacer(5);
+    sizerLeft->AddSpacer(FromDIP(5));
 
     wxStaticBoxSizer *sizerUseLabels =
         new wxStaticBoxSizer(wxVERTICAL, sizerLeftBox,
@@ -287,7 +283,7 @@ void ButtonWidgetsPage::CreateContent()
         "&Disabled (broken image icon)", wxID_ANY, sizerUseLabelsBox);
     sizerLeft->Add(sizerUseLabels, wxSizerFlags().Expand().Border());
 
-    sizerLeft->AddSpacer(10);
+    sizerLeft->AddSpacer(FromDIP(10));
 
     static const wxString dirs[] =
     {
@@ -318,7 +314,7 @@ void ButtonWidgetsPage::CreateContent()
     sizerImageMargins->Add(sizerImageMarginsRow, wxSizerFlags().Border().Centre());
     sizerLeft->Add(sizerImageMargins, wxSizerFlags().Expand().Border());
 
-    sizerLeft->AddSpacer(15);
+    sizerLeft->AddSpacer(FromDIP(15));
 
     // should be in sync with enums Button[HV]Align!
     static const wxString halign[] =
@@ -345,10 +341,10 @@ void ButtonWidgetsPage::CreateContent()
     sizerLeft->Add(m_radioHAlign, wxSizerFlags().Expand().Border());
     sizerLeft->Add(m_radioVAlign, wxSizerFlags().Expand().Border());
 
-    sizerLeft->AddSpacer(5);
+    sizerLeft->AddSpacer(FromDIP(5));
 
     wxButton *btn = new wxButton(sizerLeftBox, ButtonPage_Reset, "&Reset");
-    sizerLeft->Add(btn, wxSizerFlags().CentreHorizontal().TripleBorder(wxALL));
+    sizerLeft->Add(btn, wxSizerFlags().CentreHorizontal().TripleBorder());
 
     // middle pane
     wxStaticBoxSizer *sizerMiddle = new wxStaticBoxSizer(wxVERTICAL, this, "&Operations");
@@ -379,9 +375,9 @@ void ButtonWidgetsPage::CreateContent()
 
     // the 3 panes panes compose the window
     sizerTop->Add(sizerLeft,
-                  wxSizerFlags(0).Expand().DoubleBorder(wxALL & ~wxLEFT));
+                  wxSizerFlags().Expand().DoubleBorder(wxALL & ~wxLEFT));
     sizerTop->Add(sizerMiddle,
-                  wxSizerFlags(1).Expand().DoubleBorder(wxALL));
+                  wxSizerFlags(1).Expand().DoubleBorder());
     sizerTop->Add(m_sizerButton,
                   wxSizerFlags(1).Expand().DoubleBorder((wxALL & ~wxRIGHT)));
 
@@ -410,7 +406,6 @@ void ButtonWidgetsPage::Reset()
     m_chkUseMarkup->SetValue(false);
 #endif // wxUSE_MARKUP
     m_chkUseBitmapClass->SetValue(true);
-    m_chkDisable->SetValue(false);
 
     m_chkUsePressed->SetValue(true);
     m_chkUseFocused->SetValue(true);
@@ -511,24 +506,25 @@ void ButtonWidgetsPage::CreateButton()
         if ( m_chkUseBitmapClass->GetValue() )
         {
           bbtn = new wxBitmapButton(this, ButtonPage_Button,
-                                    CreateBitmap("normal", wxART_INFORMATION),
+                                    CreateBitmap(wxART_INFORMATION),
                                     wxDefaultPosition, wxDefaultSize, flags);
         }
         else
         {
-          bbtn = new wxButton(this, ButtonPage_Button);
-          bbtn->SetBitmapLabel(CreateBitmap("normal", wxART_INFORMATION));
+          bbtn = new wxButton(this, ButtonPage_Button, wxEmptyString,
+                              wxDefaultPosition, wxDefaultSize, flags);
+          bbtn->SetBitmapLabel(CreateBitmap(wxART_INFORMATION));
         }
         bbtn->SetBitmapMargins((wxCoord)m_imageMarginH, (wxCoord)m_imageMarginV);
 
         if ( m_chkUsePressed->GetValue() )
-            bbtn->SetBitmapPressed(CreateBitmap("pushed", wxART_HELP));
+            bbtn->SetBitmapPressed(CreateBitmap(wxART_HELP));
         if ( m_chkUseFocused->GetValue() )
-            bbtn->SetBitmapFocus(CreateBitmap("focused", wxART_ERROR));
+            bbtn->SetBitmapFocus(CreateBitmap(wxART_ERROR));
         if ( m_chkUseCurrent->GetValue() )
-            bbtn->SetBitmapCurrent(CreateBitmap("hover", wxART_WARNING));
+            bbtn->SetBitmapCurrent(CreateBitmap(wxART_WARNING));
         if ( m_chkUseDisabled->GetValue() )
-            bbtn->SetBitmapDisabled(CreateBitmap("disabled", wxART_MISSING_IMAGE));
+            bbtn->SetBitmapDisabled(CreateBitmap(wxART_MISSING_IMAGE));
         m_button = bbtn;
 #if wxUSE_COMMANDLINKBUTTON
         m_cmdLnkButton = nullptr;
@@ -609,8 +605,6 @@ void ButtonWidgetsPage::CreateButton()
 
     if ( m_chkDefault->GetValue() )
         m_button->SetDefault();
-
-    m_button->Enable(!m_chkDisable->IsChecked());
 
     m_sizerButton->AddStretchSpacer();
     m_sizerButton->Add(m_button, wxSizerFlags().Centre().Border());
@@ -699,20 +693,7 @@ void ButtonWidgetsPage::OnButton(wxCommandEvent& WXUNUSED(event))
 // ----------------------------------------------------------------------------
 
 wxBitmapBundle
-ButtonWidgetsPage::CreateBitmap(const wxString& label, const wxArtID& type)
+ButtonWidgetsPage::CreateBitmap(const wxArtID& type)
 {
-    wxBitmap bmp(FromDIP(wxSize(180, 70))); // shouldn't hardcode but it's simpler like this
-    wxMemoryDC dc;
-    dc.SelectObject(bmp);
-    dc.SetFont(GetFont());
-    dc.SetBackground(*wxCYAN_BRUSH);
-    dc.Clear();
-    dc.SetTextForeground(*wxBLACK);
-    dc.DrawLabel(wxStripMenuCodes(m_textLabel->GetValue()) + "\n"
-                    "(" + label + " state)",
-                 wxArtProvider::GetBitmap(type),
-                 wxRect(10, 10, bmp.GetWidth() - 20, bmp.GetHeight() - 20),
-                 wxALIGN_CENTRE);
-
-    return bmp;
+    return wxArtProvider::GetBitmapBundle(type, wxART_BUTTON);
 }

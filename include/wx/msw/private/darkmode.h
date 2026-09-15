@@ -20,8 +20,21 @@ namespace wxMSWDarkMode
 WXDLLIMPEXP_CORE
 bool IsActive();
 
-// Enable dark mode for the given TLW if appropriate.
-void EnableForTLW(HWND hwnd);
+// Return true if the system has switched between dark and light modes.
+// Some controls need to take extra actions to switch from light mode to dark
+// mode compared with just creating the window in dark mode. This function
+// helps us do only what is needed, to avoid overwriting user settings such as
+// background and foreground colours.
+WXDLLIMPEXP_CORE
+bool HasChanged();
+
+// Enable or disable dark mode for the given TLW if appropriate.
+void ConfigureTLW(HWND hwnd);
+
+// Helper function: call SetWindowTheme() and log a debug error if it fails.
+void SetTheme(HWND hwnd,
+              const wchar_t* themeName,
+              const wchar_t* themeId = nullptr);
 
 // Set dark theme for the given (child) window if appropriate.
 //
@@ -65,6 +78,32 @@ HandleMenuMessage(WXLRESULT* result,
                   WXWPARAM wParam,
                   WXLPARAM lParam);
 
+void NotifySysColorChange();
+
+// Hook procedure to enable dark mode for a common dialog.
+UINT_PTR CALLBACK CommonDialogHookProc(HWND hwnd, UINT uiMsg, WPARAM wParam,
+    LPARAM lParam);
+// Return true if the DarkMode_DarkTheme theme is available. This theme was
+// added in Windows 11 25H2 (build 26200).
+bool HasDarkTheme();
+
+// Draw"progress bar in dark mode: this is used when HasDarkTheme() returns
+// false as there is no native support for doing this in this case.
+void DrawGauge(wxDC& dc, const wxRect& rect, int value, int max, int flags);
+
 } // namespace wxMSWDarkMode
+
+namespace wxMSWImpl
+{
+
+// This function is not dark mode specific but reuses the code in darkmode.cpp,
+// so it's implemented there as well.
+void EnableRoundCorners(HWND hwnd);
+
+// This function draws over the section where the scroll bars meet
+// to maintain a consistent theme
+void PaintScrollBarCorner(wxWindow* w);
+
+} // namespace wxMSWImpl
 
 #endif // _WX_MSW_PRIVATE_DARKMODE_H_

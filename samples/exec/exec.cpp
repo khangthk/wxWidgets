@@ -118,10 +118,14 @@ public:
 
     void OnPOpen(wxCommandEvent& event);
 
+#if wxUSE_MIMETYPE
     void OnFileExec(wxCommandEvent& event);
+#endif // wxUSE_MIMETYPE
     void OnFileLaunch(wxCommandEvent& event);
     void OnOpenURL(wxCommandEvent& event);
+#if wxUSE_MIMETYPE
     void OnShowCommandForExt(wxCommandEvent& event);
+#endif // wxUSE_MIMETYPE
 
     void OnAbout(wxCommandEvent& event);
 
@@ -368,8 +372,10 @@ wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
 
     EVT_MENU(Exec_POpen, MyFrame::OnPOpen)
 
+#if wxUSE_MIMETYPE
     EVT_MENU(Exec_OpenFile, MyFrame::OnFileExec)
     EVT_MENU(Exec_ShowCommandForExt, MyFrame::OnShowCommandForExt)
+#endif // wxUSE_MIMETYPE
     EVT_MENU(Exec_LaunchFile, MyFrame::OnFileLaunch)
     EVT_MENU(Exec_OpenURL, MyFrame::OnOpenURL)
 
@@ -1071,6 +1077,7 @@ static bool AskUserForFileName()
     return true;
 }
 
+#if wxUSE_MIMETYPE
 void MyFrame::OnFileExec(wxCommandEvent& WXUNUSED(event))
 {
     if ( !AskUserForFileName() )
@@ -1140,6 +1147,7 @@ void MyFrame::OnShowCommandForExt(wxCommandEvent& WXUNUSED(event))
     wxLogMessage("Open command for files of extension \"%s\" is\n%s",
                  ext, cmd);
 }
+#endif // wxUSE_MIMETYPE
 
 void MyFrame::OnFileLaunch(wxCommandEvent& WXUNUSED(event))
 {
@@ -1456,21 +1464,21 @@ MyPipeFrame::MyPipeFrame(wxFrame *parent,
     m_textErr->SetEditable(false);
 
     wxSizer *sizerTop = new wxBoxSizer(wxVERTICAL);
-    sizerTop->Add(m_textOut, 0, wxGROW | wxALL, 5);
+    sizerTop->Add(m_textOut, wxSizerFlags().Expand().Border());
 
     wxSizer *sizerBtns = new wxBoxSizer(wxHORIZONTAL);
     sizerBtns->
-        Add(new wxButton(panel, Exec_Btn_Send, "&Send"), 0, wxALL, 5);
+        Add(new wxButton(panel, Exec_Btn_Send, "&Send"), wxSizerFlags().Border());
     sizerBtns->
-        Add(new wxButton(panel, Exec_Btn_SendFile, "&File..."), 0, wxALL, 5);
+        Add(new wxButton(panel, Exec_Btn_SendFile, "&File..."), wxSizerFlags().Border());
     sizerBtns->
-        Add(new wxButton(panel, Exec_Btn_Get, "&Get"), 0, wxALL, 5);
+        Add(new wxButton(panel, Exec_Btn_Get, "&Get"), wxSizerFlags().Border());
     sizerBtns->
-        Add(new wxButton(panel, Exec_Btn_Close, "&Close"), 0, wxALL, 5);
+        Add(new wxButton(panel, Exec_Btn_Close, "&Close"), wxSizerFlags().Border());
 
-    sizerTop->Add(sizerBtns, 0, wxCENTRE | wxALL, 5);
-    sizerTop->Add(m_textIn, 1, wxGROW | wxALL, 5);
-    sizerTop->Add(m_textErr, 1, wxGROW | wxALL, 5);
+    sizerTop->Add(sizerBtns, wxSizerFlags().Centre().Border());
+    sizerTop->Add(m_textIn, wxSizerFlags(1).Expand().Border());
+    sizerTop->Add(m_textErr, wxSizerFlags(1).Expand().Border());
 
     panel->SetSizer(sizerTop);
     sizerTop->Fit(this);

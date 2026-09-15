@@ -17,6 +17,7 @@
 #ifndef WX_PRECOMP
     #include "wx/icon.h"
     #include "wx/log.h"
+    #include "wx/window.h"
 #endif // WX_PRECOMP
 
 #include "wx/dc.h"
@@ -25,22 +26,11 @@
 #include "wx/qt/private/utils.h"
 #include "wx/qt/private/compat.h"
 
+#include "wx/tokenzr.h"
+
 #include <QtGui/QScreen>
 #include <QtWidgets/QApplication>
 
-static void SetPenColour( QPainter *qtPainter, QColor col )
-{
-    QPen p = qtPainter->pen();
-    p.setColor( col );
-    qtPainter->setPen( p );
-}
-
-static void SetBrushColour( QPainter *qtPainter, QColor col )
-{
-    QBrush b = qtPainter->brush();
-    b.setColor( col );
-    qtPainter->setBrush( b );
-}
 
 class QtDCOffsetHelper
 {
@@ -92,10 +82,10 @@ wxQtDCImpl::wxQtDCImpl( wxDC *owner )
 {
     m_qtPixmap = nullptr;
     m_qtPainter = nullptr;
-    m_rasterColourOp = wxQtNONE;
-    m_qtPenColor = new QColor;
-    m_qtBrushColor = new QColor;
     m_ok = true;
+
+    m_matrixCurrent.reset(new QTransform);
+    m_matrixCurrentInv.reset(new QTransform);
 }
 
 wxQtDCImpl::~wxQtDCImpl()
@@ -108,9 +98,6 @@ wxQtDCImpl::~wxQtDCImpl()
         }
         delete m_qtPainter;
     }
-
-    delete m_qtPenColor;
-    delete m_qtBrushColor;
 }
 
 void wxQtDCImpl::QtPreparePainter( )
@@ -212,7 +199,7 @@ wxSize wxQtDCImpl::GetPPI() const
     if (!srn)
         return wxSize(m_qtPainter->device()->logicalDpiX(), m_qtPainter->device()->logicalDpiY());
     qreal dotsPerInch = srn->logicalDotsPerInch();
-    return wxSize(round(dotsPerInch), round(dotsPerInch));
+    return wxSize(std::lround(dotsPerInch), std::lround(dotsPerInch));
 }
 
 void wxQtDCImpl::SetFont(const wxFont& font)
@@ -230,8 +217,6 @@ void wxQtDCImpl::SetPen(const wxPen& pen)
     if ( !m_pen.IsOk() ) return;
 
     m_qtPainter->setPen(pen.GetHandle());
-
-    ApplyRasterColourOp();
 }
 
 void wxQtDCImpl::SetBrush(const wxBrush& brush)
@@ -247,8 +232,6 @@ void wxQtDCImpl::SetBrush(const wxBrush& brush)
     }
 
     m_qtPainter->setBrush(m_brush.GetHandle());
-
-    ApplyRasterColourOp();
 }
 
 void wxQtDCImpl::SetBackground(const wxBrush& brush)
@@ -289,33 +272,57 @@ void wxQtDCImpl::SetPalette(const wxPalette& WXUNUSED(palette))
 }
 #endif // wxUSE_PALETTE
 
+wxPoint wxQtDCImpl::DeviceToLogical(wxCoord x, wxCoord y) const
+{
+    QPointF devicePoint(x, y);
+    QPointF logicalPoint = m_matrixCurrentInv->map(devicePoint);
+    return wxPoint(wxRound(logicalPoint.x()), wxRound(logicalPoint.y()));
+}
+
+wxPoint wxQtDCImpl::LogicalToDevice(wxCoord x, wxCoord y) const
+{
+    QPointF logicalPoint(x, y);
+    QPointF devicePoint = m_matrixCurrent->map(logicalPoint);
+    return wxPoint(wxRound(devicePoint.x()), wxRound(devicePoint.y()));
+}
+
+wxSize wxQtDCImpl::DeviceToLogicalRel(int x, int y) const
+{
+    wxPoint pt0 = DeviceToLogical(0, 0);
+    wxPoint pt  = DeviceToLogical(x, y);
+    return wxSize(pt.x-pt0.x, pt.y-pt0.y);
+}
+
+wxSize wxQtDCImpl::LogicalToDeviceRel(int x, int y) const
+{
+    wxPoint pt0 = LogicalToDevice(0, 0);
+    wxPoint pt  = LogicalToDevice(x, y);
+    return wxSize(pt.x-pt0.x, pt.y-pt0.y);
+}
+
 void wxQtDCImpl::SetLogicalFunction(wxRasterOperationMode function)
 {
     m_logicalFunction = function;
 
-    wxQtRasterColourOp rasterColourOp = wxQtNONE;
     switch ( function )
     {
         case wxCLEAR:       // 0
-            m_qtPainter->setCompositionMode( QPainter::CompositionMode_SourceOver );
-            rasterColourOp = wxQtBLACK;
+            m_qtPainter->setCompositionMode( QPainter::RasterOp_ClearDestination );
             break;
         case wxXOR:         // src XOR dst
             m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceXorDestination );
             break;
-        case wxINVERT:      // NOT dst => dst XOR WHITE
-            m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceXorDestination );
-            rasterColourOp = wxQtWHITE;
+        case wxINVERT:      // NOT dst
+            m_qtPainter->setCompositionMode( QPainter::RasterOp_NotDestination );
             break;
-        case wxOR_REVERSE:  // src OR (NOT dst) => (NOT (NOT src)) OR (NOT dst)
-            m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSourceOrNotDestination );
-            rasterColourOp = wxQtINVERT;
+        case wxOR_REVERSE:  // src OR (NOT dst)
+            m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceOrNotDestination );
             break;
         case wxAND_REVERSE: // src AND (NOT dst)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceAndNotDestination );
             break;
         case wxCOPY:        // src
-            m_qtPainter->setCompositionMode( QPainter::CompositionMode_SourceOver );
+            m_qtPainter->setCompositionMode( QPainter::CompositionMode_Source );
             break;
         case wxAND:         // src AND dst
             m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceAndDestination );
@@ -324,7 +331,7 @@ void wxQtDCImpl::SetLogicalFunction(wxRasterOperationMode function)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSourceAndDestination );
             break;
         case wxNO_OP:       // dst
-            m_qtPainter->setCompositionMode( QPainter::CompositionMode_DestinationOver );
+            m_qtPainter->setCompositionMode( QPainter::CompositionMode_Destination );
             break;
         case wxNOR:         // (NOT src) AND (NOT dst)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSourceAndNotDestination );
@@ -336,8 +343,7 @@ void wxQtDCImpl::SetLogicalFunction(wxRasterOperationMode function)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSource );
             break;
         case wxOR_INVERT:   // (NOT src) OR dst
-            m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceOrDestination );
-            rasterColourOp = wxQtINVERT;
+            m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSourceOrDestination );
             break;
         case wxNAND:        // (NOT src) OR (NOT dst)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_NotSourceOrNotDestination );
@@ -346,47 +352,7 @@ void wxQtDCImpl::SetLogicalFunction(wxRasterOperationMode function)
             m_qtPainter->setCompositionMode( QPainter::RasterOp_SourceOrDestination );
             break;
         case wxSET:          // 1
-            m_qtPainter->setCompositionMode( QPainter::CompositionMode_SourceOver );
-            rasterColourOp = wxQtWHITE;
-            break;
-    }
-
-    if ( rasterColourOp != m_rasterColourOp )
-    {
-        // Source colour mode changed
-        m_rasterColourOp = rasterColourOp;
-
-        // Restore original colours and apply new mode
-        SetPenColour( m_qtPainter, *m_qtPenColor );
-        SetBrushColour( m_qtPainter, *m_qtPenColor );
-
-        ApplyRasterColourOp();
-    }
-}
-
-void wxQtDCImpl::ApplyRasterColourOp()
-{
-    // Save colours
-    *m_qtPenColor = m_qtPainter->pen().color();
-    *m_qtBrushColor = m_qtPainter->brush().color();
-
-    // Apply op
-    switch ( m_rasterColourOp )
-    {
-        case wxQtWHITE:
-            SetPenColour( m_qtPainter, QColor( Qt::white ) );
-            SetBrushColour( m_qtPainter, QColor( Qt::white ) );
-            break;
-        case wxQtBLACK:
-            SetPenColour( m_qtPainter, QColor( Qt::black ) );
-            SetBrushColour( m_qtPainter, QColor( Qt::black ) );
-            break;
-        case wxQtINVERT:
-            SetPenColour( m_qtPainter, QColor( ~m_qtPenColor->rgb() ) );
-            SetBrushColour( m_qtPainter, QColor( ~m_qtBrushColor->rgb() ) );
-            break;
-        case wxQtNONE:
-            // No op
+            m_qtPainter->setCompositionMode( QPainter::RasterOp_SetDestination );
             break;
     }
 }
@@ -400,10 +366,17 @@ wxCoord wxQtDCImpl::GetCharHeight() const
 
 wxCoord wxQtDCImpl::GetCharWidth() const
 {
-    //FIXME: Returning max width, instead of average
+    // We don't use QFontMetrics::maxWidth() here as it returns the width of the
+    // widest character in the font, which is usually too big for common usage.
+    // Instead, we use horizontalAdvance() here for consistency with the other
+    // ports. Or a decent approximation of it if not available.
     QFontMetrics metrics(m_qtPainter->isActive() ?
         m_qtPainter->font() : QApplication::font());
-    return wxCoord( metrics.maxWidth() );
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 11, 0))
+    return wxCoord( metrics.horizontalAdvance('H') );
+#else
+    return wxCoord( metrics.averageCharWidth() + 2 );
+#endif
 }
 
 void wxQtDCImpl::DoGetTextExtent(const wxString& string,
@@ -455,10 +428,9 @@ void wxQtDCImpl::Clear()
     int width, height;
     DoGetSize(&width, &height);
 
-    m_qtPainter->eraseRect( DeviceToLogicalX(0),
-                            DeviceToLogicalY(0),
-                            DeviceToLogicalXRel(width),
-                            DeviceToLogicalYRel(height) );
+    const wxPoint pos = DeviceToLogical(0, 0);
+    const wxSize size = DeviceToLogicalRel(width, height);
+    m_qtPainter->eraseRect( pos.x, pos.y, size.x, size.y);
 }
 
 void wxQtDCImpl::UpdateClipBox()
@@ -471,10 +443,10 @@ void wxQtDCImpl::UpdateClipBox()
         int dcwidth, dcheight;
         DoGetSize(&dcwidth, &dcheight);
 
-        m_qtPainter->setClipRect(DeviceToLogicalX(0),
-                                 DeviceToLogicalY(0),
-                                 DeviceToLogicalXRel(dcwidth),
-                                 DeviceToLogicalYRel(dcheight),
+        const wxPoint pos = DeviceToLogical(0, 0);
+        const wxSize size = DeviceToLogicalRel(dcwidth, dcheight);
+
+        m_qtPainter->setClipRect(pos.x, pos.y, size.x, size.y,
                                  m_clipping ? Qt::IntersectClip : Qt::ReplaceClip);
     }
 
@@ -541,14 +513,29 @@ void wxQtDCImpl::DoSetDeviceClippingRegion(const wxRegion& region)
 {
     if ( m_qtPainter->isActive() )
     {
+        auto qtRegion = region.GetHandle();
+
+        if ( GetLayoutDirection() == wxLayout_RightToLeft )
+        {
+            int w;
+            if ( m_window )
+                m_window->GetClientSize(&w, nullptr);
+            else
+                GetSize(&w, nullptr);
+            QTransform matrix;
+            matrix.translate(w, 0);
+            matrix.scale(-1, 1);
+            qtRegion = matrix.map(qtRegion);
+        }
+
         // Disable the matrix transformations to match device coordinates
         m_qtPainter->setWorldMatrixEnabled(false);
         // Enable clipping explicitly as QPainter::setClipRegion() doesn't
         // do that for us
-        m_qtPainter->setClipping( true );
+        m_qtPainter->setClipping(true);
         // Set QPainter clipping (intersection if not the first one)
-        m_qtPainter->setClipRegion( region.GetHandle(),
-                                    m_clipping ? Qt::IntersectClip : Qt::ReplaceClip );
+        m_qtPainter->setClipRegion(qtRegion,
+                                   m_clipping ? Qt::IntersectClip : Qt::ReplaceClip);
 
         m_qtPainter->setWorldMatrixEnabled(true);
 
@@ -567,6 +554,29 @@ void wxQtDCImpl::DestroyClippingRegion()
         m_qtPainter->setClipping( false );
 
     m_isClipBoxValid = false;
+}
+
+wxLayoutDirection wxQtDCImpl::GetLayoutDirection() const
+{
+    if ( m_qtPainter->isActive() )
+    {
+        return m_qtPainter->layoutDirection() == Qt::RightToLeft
+             ? wxLayout_RightToLeft
+             : wxLayout_LeftToRight;
+    }
+
+    return m_window ? m_window->GetLayoutDirection() : wxLayout_Default;
+}
+
+void wxQtDCImpl::SetLayoutDirection(wxLayoutDirection dir)
+{
+    // QPainter::setLayoutDirection() affects text drawing only.
+    // i.e.: painter's origin and axes orientations are not affected.
+    m_qtPainter->setLayoutDirection(dir == wxLayout_RightToLeft ? Qt::RightToLeft
+                                                                : Qt::LeftToRight);
+
+    // No need to mirror the painter here (in RTL layout) as it will be adjusted
+    // in ComputeScaleAndOrigin() anyway.
 }
 
 bool wxQtDCImpl::DoFloodFill(wxCoord x, wxCoord y, const wxColour& col,
@@ -593,18 +603,19 @@ bool wxQtDCImpl::DoGetPixel(wxCoord x, wxCoord y, wxColour *col) const
 
     if ( col )
     {
-        wxCHECK_MSG( m_qtPixmap != nullptr, false, "This DC doesn't support GetPixel()" );
-        QPixmap pixmap1px = m_qtPixmap->copy( x, y, 1, 1 );
-        QImage image = pixmap1px.toImage();
-        QColor pixel = image.pixel( 0, 0 );
-        col->Set( pixel.red(), pixel.green(), pixel.blue(), pixel.alpha() );
+        if ( m_qtPixmap )
+        {
+            QPixmap pixmap1px = m_qtPixmap->copy( x, y, 1, 1 );
+            QImage image = pixmap1px.toImage();
+            QColor pixel = image.pixel( 0, 0 );
+            col->Set( pixel.red(), pixel.green(), pixel.blue(), pixel.alpha() );
 
-        return true;
+            return true;
+        }
+        // else: This DC doesn't support GetPixel()
     }
-    else
-    {
-        return false;
-    }
+
+    return false;
 }
 
 void wxQtDCImpl::DoDrawPoint(wxCoord x, wxCoord y)
@@ -750,6 +761,15 @@ void wxQtDCImpl::DoDrawBitmap(const wxBitmap &bmp, wxCoord x, wxCoord y,
                           bool useMask )
 {
     QPixmap pix = *bmp.GetHandle();
+
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+    {
+        // bitmap is not mirrored
+        m_qtPainter->save();
+        m_qtPainter->scale(-1, 1);
+        x = -x - bmp.GetWidth();
+    }
+
     if (pix.depth() == 1) {
         //Monochrome bitmap, draw using text fore/background
 
@@ -774,85 +794,82 @@ void wxQtDCImpl::DoDrawBitmap(const wxBitmap &bmp, wxCoord x, wxCoord y,
                 pix.setMask(*bmp.GetMask()->GetHandle());
             m_qtPainter->drawPixmap(x, y, pix);
     }
+
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+        m_qtPainter->restore();
 }
 
 void wxQtDCImpl::DoDrawText(const wxString& text, wxCoord x, wxCoord y)
 {
-    QPen savedPen = m_qtPainter->pen();
-    m_qtPainter->setPen(QPen(m_textForegroundColour.GetQColor()));
-
-    // Disable logical function
-    QPainter::CompositionMode savedOp = m_qtPainter->compositionMode();
-    m_qtPainter->setCompositionMode( QPainter::CompositionMode_SourceOver );
-
-    if (m_backgroundMode == wxBRUSHSTYLE_SOLID)
-    {
-        m_qtPainter->setBackgroundMode(Qt::OpaqueMode);
-
-        //Save pen/brush
-        QBrush savedBrush = m_qtPainter->background();
-
-        //Use text colors
-        m_qtPainter->setBackground(QBrush(m_textBackgroundColour.GetQColor()));
-
-        //Draw
-        m_qtPainter->drawText(x, y, 1, 1, Qt::TextDontClip, wxQtConvertString(text));
-
-        //Restore saved settings
-        m_qtPainter->setBackground(savedBrush);
-
-
-        m_qtPainter->setBackgroundMode(Qt::TransparentMode);
-    }
-    else
-        m_qtPainter->drawText(x, y, 1, 1, Qt::TextDontClip, wxQtConvertString(text));
-
-    m_qtPainter->setPen(savedPen);
-    m_qtPainter->setCompositionMode( savedOp );
+    DoDrawRotatedText(text, x, y, 0.0);
 }
 
 void wxQtDCImpl::DoDrawRotatedText(const wxString& text,
-                               wxCoord x, wxCoord y, double angle)
+                                   wxCoord x, wxCoord y, double angle)
 {
-    if (m_backgroundMode == wxBRUSHSTYLE_SOLID)
-        m_qtPainter->setBackgroundMode(Qt::OpaqueMode);
-
-    //Move and rotate (reverse angle direction in Qt and wx)
+    m_qtPainter->save();
+    // Move and rotate (reverse angle direction in Qt and wx)
     m_qtPainter->translate(x, y);
     m_qtPainter->rotate(-angle);
 
-    QPen savedPen = m_qtPainter->pen();
     m_qtPainter->setPen(QPen(m_textForegroundColour.GetQColor()));
 
     // Disable logical function
-    QPainter::CompositionMode savedOp = m_qtPainter->compositionMode();
     m_qtPainter->setCompositionMode( QPainter::CompositionMode_SourceOver );
 
     if (m_backgroundMode == wxBRUSHSTYLE_SOLID)
     {
         m_qtPainter->setBackgroundMode(Qt::OpaqueMode);
 
-        //Save pen/brush
-        QBrush savedBrush = m_qtPainter->background();
-
-        //Use text colors
         m_qtPainter->setBackground(QBrush(m_textBackgroundColour.GetQColor()));
-
-        //Draw
-        m_qtPainter->drawText(0, 0, 1, 1, Qt::TextDontClip, wxQtConvertString(text));
-
-        //Restore saved settings
-        m_qtPainter->setBackground(savedBrush);
-
-        m_qtPainter->setBackgroundMode(Qt::TransparentMode);
     }
-    else
-        m_qtPainter->drawText(0, 0, 1, 1, Qt::TextDontClip, wxQtConvertString(text));
 
-    //Reset to default
-    ComputeScaleAndOrigin();
-    m_qtPainter->setPen(savedPen);
-    m_qtPainter->setCompositionMode( savedOp );
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+    {
+        // text is not mirrored
+        m_qtPainter->scale(-1, 1);
+    }
+
+    QRect  boundingRect; // Bounding rectangle for non rotated text.
+    QRect* boundingRectPtr = AreAutomaticBoundingBoxUpdatesEnabled()
+                           ? &boundingRect : nullptr;
+
+    QFontMetrics metrics = m_qtPainter->fontMetrics();
+
+    int lineSpacing = 0;
+    wxStringTokenizer tokenizer(text, "\n");
+    while ( tokenizer.HasMoreTokens() )
+    {
+        const wxString line = tokenizer.GetNextToken();
+        m_qtPainter->drawText(0, lineSpacing, 1, 1, Qt::TextDontClip,
+                              wxQtConvertString(line), boundingRectPtr);
+        lineSpacing += metrics.lineSpacing();
+
+        if ( AreAutomaticBoundingBoxUpdatesEnabled() && wxIsNullDouble(angle) )
+        {
+            CalcBoundingBox(wxQtConvertRect(boundingRect));
+        }
+    }
+
+    m_qtPainter->restore();
+
+    // Calculate bounding rectangle for rotated text.
+    if ( AreAutomaticBoundingBoxUpdatesEnabled() && !wxIsNullDouble(angle) )
+    {
+        const double rad = wxDegToRad(angle);
+
+        const QRect rect = metrics.boundingRect(wxQtConvertString(text));
+        const int w = rect.width();
+        const int h = rect.height();
+
+        // "upper left" and "upper right"
+        CalcBoundingBox(x, y, x + wxCoord(w*cos(rad)), y - wxCoord(w*sin(rad)));
+
+        // "bottom left" and "bottom right"
+        x += (wxCoord)(h*sin(rad));
+        y += (wxCoord)(h*cos(rad));
+        CalcBoundingBox(x, y, x + wxCoord(w*cos(rad)), y - wxCoord(w*sin(rad)));
+    }
 }
 
 bool wxQtDCImpl::DoBlit(wxCoord xdest, wxCoord ydest,
@@ -864,13 +881,38 @@ bool wxQtDCImpl::DoBlit(wxCoord xdest, wxCoord ydest,
                     wxCoord WXUNUSED(xsrcMask),
                     wxCoord WXUNUSED(ysrcMask) )
 {
-    wxQtDCImpl *implSource = (wxQtDCImpl*)source->GetImpl();
+    QPixmap  qtDummySource;
+    QPixmap* qtSource = &qtDummySource;
 
-    QPixmap *qtSource = implSource->GetQPixmap();
+    if ( rop == wxCLEAR || rop == wxINVERT || rop == wxNO_OP || rop == wxSET )
+    {
+        // qtSource is already initialized to point to qtDummySource.
+        // Notice that all we need to do is make qtDummySource a valid object,
+        // i.e. ensure that !qtDummySource.isNull() is true, before passing it to
+        // drawPixmap() or drawImage() below. The actual content of qtDummySource
+        // doesn't matter for these raster operations since it will not actually
+        // be used by either function.
+
+        qtDummySource = std::move(QPixmap(1, 1));
+    }
+    else
+    {
+        wxQtDCImpl *implSource = (wxQtDCImpl*)source->GetImpl();
+
+        qtSource = implSource->GetQPixmap();
+    }
 
     // Not a CHECK on purpose
     if ( !qtSource )
         return false;
+
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+    {
+        // blit is not mirrored
+        m_qtPainter->save();
+        m_qtPainter->scale(-1, 1);
+        xdest = -xdest - width;
+    }
 
     // Change logical function
     wxRasterOperationMode savedMode = GetLogicalFunction();
@@ -893,6 +935,11 @@ bool wxQtDCImpl::DoBlit(wxCoord xdest, wxCoord ydest,
     }
 
     SetLogicalFunction( savedMode );
+
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+    {
+        m_qtPainter->restore();
+    }
 
     return true;
 }
@@ -990,22 +1037,37 @@ void wxQtDCImpl::DoDrawPolyPolygon(int n,
 
 void wxQtDCImpl::ComputeScaleAndOrigin()
 {
-    QTransform t;
+    wxDCImpl::ComputeScaleAndOrigin();
 
-    // First apply device origin
-    t.translate( m_deviceOriginX + m_deviceLocalOriginX,
-                 m_deviceOriginY + m_deviceLocalOriginY );
+    QTransform matrixCurrent;
 
-    // Second, scale
-    m_scaleX = m_logicalScaleX * m_userScaleX;
-    m_scaleY = m_logicalScaleY * m_userScaleY;
-    t.scale( m_scaleX * m_signX, m_scaleY * m_signY );
+    matrixCurrent.translate( m_deviceOriginX + m_deviceLocalOriginX - m_logicalOriginX * m_signX * m_scaleX,
+                             m_deviceOriginY + m_deviceLocalOriginY - m_logicalOriginY * m_signY * m_scaleY );
 
-    // Finally, logical origin
-    t.translate( -m_logicalOriginX, -m_logicalOriginY );
+    matrixCurrent.scale( m_scaleX * m_signX, m_scaleY * m_signY );
+
+    *m_matrixCurrent = matrixCurrent;
+    *m_matrixCurrentInv = matrixCurrent.inverted();
+
+    if ( GetLayoutDirection() == wxLayout_RightToLeft )
+    {
+        QTransform matrixRTL;
+
+        int w;
+
+        if ( m_window )
+            m_window->GetClientSize(&w, nullptr);
+        else
+            GetSize(&w, nullptr);
+
+        matrixRTL.translate(w, 0);
+        matrixRTL.scale(-1, 1);
+
+        matrixCurrent *= matrixRTL;
+    }
 
     // Apply transform to QPainter, overwriting the previous one
-    m_qtPainter->setWorldTransform(t, false);
+    m_qtPainter->setWorldTransform(matrixCurrent, false);
 
     m_isClipBoxValid = false;
 }

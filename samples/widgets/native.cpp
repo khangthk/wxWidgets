@@ -24,7 +24,7 @@
 // Objective C++, but it's also still compiled by the makefiles directly as C++
 // source because we can't easily exclude it, so check for this and only
 // compile the rest of this file once
-#if !defined(__WXOSX_COCOA__) || defined(__OBJC__)
+#if !defined(__DARWIN__) || defined(__OBJC__)
 
 // for all others, include the necessary headers
 #ifndef WX_PRECOMP
@@ -87,7 +87,7 @@ public:
         // When creating the native window, we must specify the valid parent
         // and while we don't have to specify any position if it's going to be
         // laid out by sizers, we do need the size.
-        const wxSize size = FromDIP(wxSize(140, 30));
+        const wxSize size = FromDIP(FromDIP(wxSize(140, 30)));
 
         HWND hwnd = ::CreateWindow
                       (
@@ -250,7 +250,7 @@ public:
 class NativeWidgetsPage : public WidgetsPage
 {
 public:
-    NativeWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist);
+    NativeWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist);
 
     virtual wxWindow *GetWidget() const override { return m_nativeWindow; }
     virtual void RecreateWidget() override;
@@ -275,7 +275,7 @@ private:
 
 IMPLEMENT_WIDGETS_PAGE(NativeWidgetsPage, "Native", NATIVE_CTRLS);
 
-NativeWidgetsPage::NativeWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist)
+NativeWidgetsPage::NativeWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist)
                  : WidgetsPage(book, imaglist, native_xpm)
 {
     m_nativeWindow = nullptr;

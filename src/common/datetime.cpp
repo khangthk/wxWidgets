@@ -580,6 +580,7 @@ bool wxDateTime::IsLeapYear(int year, wxDateTime::Calendar cal)
 bool wxDateTime::GetFirstWeekDay(wxDateTime::WeekDay *firstDay)
 {
     wxCHECK_MSG( firstDay, false, wxS("output parameter must be non-null") );
+#if wxUSE_REGKEY
     wxRegKey key(wxRegKey::HKCU, "Control Panel\\International");
     wxString val;
 
@@ -590,6 +591,7 @@ bool wxDateTime::GetFirstWeekDay(wxDateTime::WeekDay *firstDay)
         return true;
     }
     else
+#endif // wxUSE_REGKEY
     {
         *firstDay = wxDateTime::Sun;
         return false;
@@ -1274,13 +1276,20 @@ wxDateTime& wxDateTime::Set(wxDateTime_t day,
     // Epoch and, for 32-bit time_t, before 2038 (for 64-bit time_t, the range
     // is unlimited and while we can't be sure that the standard library works
     // for the dates in the distant future, we are not going to do better
-    // ourselves neither, so let it handle them).
+    // ourselves either, so let it handle them).
     static const int yearMinInRange = 1970;
     static const int yearMaxInRange = 2037;
 
     // test only the year instead of testing for the exact end of the Unix
     // time_t range - it doesn't bring anything to do more precise checks
-    if ( year >= yearMinInRange && (sizeof(time_t) > 4 || year <= yearMaxInRange) )
+    if ( year >= yearMinInRange &&
+            ((sizeof(time_t) > 4
+#if defined(__VISUALC__) || defined(__MINGW64__)
+              // MSVC CRT (also used by MinGW) is documented not to support
+              // years > 3000, even when using 64-bit time_t.
+              && year <= 3000
+#endif // Using MSVC CRT
+             ) || year <= yearMaxInRange) )
     {
         // use the standard library version if the date is in range - this is
         // probably more efficient than our code
@@ -1407,34 +1416,33 @@ wxDateTime& wxDateTime::SetFromDOS(unsigned long ddt)
 
 unsigned long wxDateTime::GetAsDOS() const
 {
-    unsigned long ddt;
-    time_t ticks = GetTicks();
-    struct tm tmstruct;
-    struct tm *tm = wxLocaltime_r(&ticks, &tmstruct);
-    wxCHECK_MSG( tm, ULONG_MAX, wxT("time can't be represented in DOS format") );
+    const Tm tm = GetTm();
 
-    long year = tm->tm_year;
-    year -= 80;
+    const long yearOffset = tm.year - 1980;
+    wxCHECK_MSG( yearOffset >= 0 && yearOffset <= 127,
+                 ULONG_MAX,
+                 wxT("time can't be represented in DOS format") );
+
+    unsigned long year = static_cast<unsigned long>(yearOffset);
     year <<= 25;
 
-    long month = tm->tm_mon;
+    unsigned long month = static_cast<unsigned long>(tm.mon);
     month += 1;
     month <<= 21;
 
-    long day = tm->tm_mday;
+    unsigned long day = tm.mday;
     day <<= 16;
 
-    long hour = tm->tm_hour;
+    unsigned long hour = tm.hour;
     hour <<= 11;
 
-    long minute = tm->tm_min;
+    unsigned long minute = tm.min;
     minute <<= 5;
 
-    long second = tm->tm_sec;
+    unsigned long second = tm.sec;
     second /= 2;
 
-    ddt = year | month | day | hour | minute | second;
-    return ddt;
+    return year | month | day | hour | minute | second;
 }
 
 // ----------------------------------------------------------------------------
@@ -2186,6 +2194,12 @@ bool wxDateTimeHolidayAuthority::IsHoliday(const wxDateTime& dt)
     {
         if ( ms_authorities[n]->DoIsHoliday(dt) )
         {
+            // DoIsHoliday() and DoGetHolidaysInRange() may have implementations
+            // completely independent of each other, but it would be nice if both
+            // consider the same days to be holidays.
+            wxDateTimeArray hol;
+            wxASSERT( ms_authorities[n]->DoGetHolidaysInRange(dt, dt, hol) == 1
+                      && hol.Last() == dt );
             return true;
         }
     }
@@ -2199,6 +2213,13 @@ wxDateTimeHolidayAuthority::GetHolidaysInRange(const wxDateTime& dtStart,
                                                const wxDateTime& dtEnd,
                                                wxDateTimeArray& holidays)
 {
+    if ( dtStart > dtEnd )
+    {
+        wxFAIL_MSG( wxT("invalid date range in GetHolidaysInRange") );
+
+        return 0u;
+    }
+
     wxDateTimeArray hol;
 
     holidays.Clear();
@@ -2207,6 +2228,16 @@ wxDateTimeHolidayAuthority::GetHolidaysInRange(const wxDateTime& dtStart,
     for ( size_t nAuth = 0; nAuth < countAuth; nAuth++ )
     {
         ms_authorities[nAuth]->DoGetHolidaysInRange(dtStart, dtEnd, hol);
+
+#if wxDEBUG_LEVEL
+        // DoIsHoliday() and DoGetHolidaysInRange() may have implementations
+        // completely independent of each other, but it would be nice if both
+        // consider the same days to be holidays.
+        for ( const auto& dt : hol )
+        {
+            wxASSERT( ms_authorities[nAuth]->DoIsHoliday(dt) );
+        }
+#endif // wxDEBUG_LEVEL
 
         WX_APPEND_ARRAY(holidays, hol);
     }
@@ -2248,13 +2279,6 @@ size_t wxDateTimeWorkDays::DoGetHolidaysInRange(const wxDateTime& dtStart,
                                                 const wxDateTime& dtEnd,
                                                 wxDateTimeArray& holidays) const
 {
-    if ( dtStart > dtEnd )
-    {
-        wxFAIL_MSG( wxT("invalid date range in GetHolidaysInRange") );
-
-        return 0u;
-    }
-
     holidays.Empty();
 
     // instead of checking all days, start with the first Sat after dtStart and
@@ -2292,6 +2316,7 @@ std::vector<wxDateTime> wxDateTimeUSCatholicFeasts::m_holyDaysOfObligation =
     { wxDateTime(25, wxDateTime::Month::Dec, 0) }  // Christmas
 };
 
+/* static */
 wxDateTime wxDateTimeUSCatholicFeasts::GetEaster(int year)
 {
     // Adjust for miscalculation in Gauss formula
@@ -2365,6 +2390,44 @@ wxDateTime wxDateTimeUSCatholicFeasts::GetEaster(int year)
     }
 }
 
+/* static */
+wxDateTime wxDateTimeUSCatholicFeasts::GetThursdayAscension(int year)
+{
+    const wxDateTime ascension = GetEaster(year) + wxDateSpan::Days(39);
+    wxASSERT_MSG(
+        ascension.GetWeekDay() == wxDateTime::WeekDay::Thu,
+        "Error in Ascension calculation!");
+    return ascension;
+}
+
+/* static */
+wxDateTime wxDateTimeUSCatholicFeasts::GetSundayAscension(int year)
+{
+    const wxDateTime ascension = GetEaster(year) + wxDateSpan::Weeks(6);
+    wxASSERT_MSG(
+        ascension.GetWeekDay() == wxDateTime::WeekDay::Sun,
+        "Error in Ascension calculation!");
+    return ascension;
+}
+
+bool wxDateTimeUSCatholicFeasts::DoIsHoliday(const wxDateTime& dt) const
+{
+    if (dt.IsSameDate(GetEaster(dt.GetYear())) ||
+        dt.IsSameDate(GetThursdayAscension(dt.GetYear())) )
+    {
+        return true;
+    }
+    for (const auto& feast : m_holyDaysOfObligation)
+    {
+        if (feast.GetMonth() == dt.GetMonth() &&
+            feast.GetDay() == dt.GetDay())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 size_t wxDateTimeUSCatholicFeasts::DoGetHolidaysInRange(const wxDateTime& dtStart,
                                                         const wxDateTime& dtEnd,
                                                         wxDateTimeArray& holidays) const
@@ -2376,7 +2439,6 @@ size_t wxDateTimeUSCatholicFeasts::DoGetHolidaysInRange(const wxDateTime& dtStar
         if (DoIsHoliday(dt) )
         {
             holidays.Add(dt);
-            continue;
         }
     }
 
@@ -2387,22 +2449,14 @@ size_t wxDateTimeUSCatholicFeasts::DoGetHolidaysInRange(const wxDateTime& dtStar
 // wxDateTimeChristianHolidays
 // ----------------------------------------------------------------------------
 
-size_t wxDateTimeChristianHolidays::DoGetHolidaysInRange(const wxDateTime& dtStart,
-                                                         const wxDateTime& dtEnd,
-                                                         wxDateTimeArray& holidays) const
+bool wxDateTimeChristianHolidays::DoIsHoliday(const wxDateTime& dt) const
 {
-    holidays.Clear();
-
-    for (wxDateTime dt = dtStart; dt <= dtEnd; dt += wxDateSpan::Day())
+    if (dt.IsSameDate(GetEaster(dt.GetYear())) ||
+        (dt.GetMonth() == wxDateTime::Month::Dec && dt.GetDay() == 25))
     {
-        if (DoIsHoliday(dt) )
-        {
-            holidays.Add(dt);
-            continue;
-        }
+        return true;
     }
-
-    return holidays.size();
+    return false;
 }
 
 // ============================================================================

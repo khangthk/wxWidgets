@@ -390,6 +390,10 @@ public:
         This can be useful to display a cursor as it cannot be drawn directly
         on a window.
 
+        @note This constructor creates invalid bitmap in wxGTK when using
+            Wayland as there is no way to retrieve the cursor bitmap under this
+            platform.
+
         @param cursor A valid wxCursor.
 
         @since 3.1.0
@@ -917,6 +921,20 @@ public:
     static void Rescale(wxBitmap& bmp, const wxSize& sizeNeeded);
 
     /**
+        Convert the given bitmap to a disabled ("greyed out") appearance
+        in place.
+
+        The bitmap is replaced with its greyscale version, keeping the same
+        physical size and scale factor, so that it is still drawn at the same
+        logical size as the original.
+
+        The bitmap must be valid.
+
+        @since 3.3.4
+     */
+    static void MakeDisabled(wxBitmap& bmp);
+
+    /**
         Remove alpha channel from the bitmap.
 
         This is the same as calling UseAlpha() with @false argument.
@@ -943,29 +961,6 @@ public:
     */
     virtual bool SaveFile(const wxString& name, wxBitmapType type,
                           const wxPalette* palette = nullptr) const;
-
-    /**
-         @deprecated This function is deprecated since version 3.1.2, dimensions
-            and depth can only be set at construction time.
-
-        Sets the depth member (does not affect the bitmap data).
-
-        @param depth
-            Bitmap depth.
-
-    */
-    virtual void SetDepth(int depth);
-
-    /**
-        @deprecated This function is deprecated since version 3.1.2, dimensions
-            and depth can only be set at construction time.
-
-        Sets the height member (does not affect the bitmap data).
-
-        @param height
-            Bitmap height in pixels.
-    */
-    virtual void SetHeight(int height);
 
     /**
         Sets the bitmap scale factor.
@@ -1006,17 +1001,6 @@ public:
         @see wxPalette
     */
     virtual void SetPalette(const wxPalette& palette);
-
-    /**
-        @deprecated This function is deprecated since version 3.1.2, dimensions
-            and depth can only be set at construction time.
-
-        Sets the width member (does not affect the bitmap data).
-
-        @param width
-            Bitmap width in pixels.
-    */
-    virtual void SetWidth(int width);
 
     /**
         Enable or disable use of alpha channel in this bitmap.

@@ -852,10 +852,6 @@ static void OneRegionRTL(wxDC& dc, const wxBitmap& bmp)
         return;
     }
 
-#ifdef __WXGTK__
-    wxUnusedVar(bmp);
-    WARN("Skipping test known to fail in wxGTK");
-#else
     // Setting one clipping region inside DC area.
     const int x = 10;
     const int y = 20;
@@ -869,7 +865,6 @@ static void OneRegionRTL(wxDC& dc, const wxBitmap& bmp)
     CheckClipBox(dc, bmp,
         x, y, w, h,
         (s_dcSize.x-1)-x2, y, w, h);
-#endif
 }
 
 static void TwoRegionsOverlapping(wxDC& dc, const wxBitmap& bmp, const wxPoint& parentDcOrigin)
@@ -1033,13 +1028,9 @@ static void OneDevRegionRTL(wxDC& dc, const wxBitmap& bmp, bool useTransformMatr
         return;
     }
 
-#ifdef __WXGTK__
-    wxUnusedVar(bmp);
-    WARN("Skipping test known to fail in wxGTK");
-#else
     // Setting one clipping region in device coordinates
     // inside transformed DC area.
-    const int x = 10;
+    const int x = 11;
     const int y = 21;
     const int w = 79;
     const int h = 75;
@@ -1064,12 +1055,15 @@ static void OneDevRegionRTL(wxDC& dc, const wxBitmap& bmp, bool useTransformMatr
     dc.SetDeviceClippingRegion(reg);
     dc.SetBackground(wxBrush(s_fgColour, wxBRUSHSTYLE_SOLID));
     dc.Clear();
-    wxPoint pos = dc.DeviceToLogical(x+w-1, y); // right physical edge becomes left logical edge
-    wxSize dim = dc.DeviceToLogicalRel(-w, h);
+    // right physical edge becomes left logical edge in a mirrored DC.
+    const int x2 = s_dcSize.x - (x + w);
+
+    wxPoint pos = dc.DeviceToLogical(x, y);
+    wxSize dim = dc.DeviceToLogicalRel(w, h);
+
     CheckClipBox(dc, bmp,
                  pos.x, pos.y, dim.x, dim.y,
-                 x, y, w, h);
-#endif
+                 x2, y, w, h, 1 /*posTolerance*/);
 }
 
 static void OneLargeDevRegion(wxDC& dc, const wxBitmap& bmp, bool checkExtCoords, bool useTransformMatrix, const wxPoint& parentDcOrigin)
@@ -1259,6 +1253,9 @@ static void OneDevRegionNonRect(wxDC& dc, const wxBitmap& bmp, bool checkExtCoor
     {
         wxGraphicsRenderer* rend = gc->GetRenderer();
         gc = rend->CreateContext(memDC);
+    }
+    if ( gc )
+    {
         gc->SetAntialiasMode(wxANTIALIAS_NONE);
         gc->DisableOffset();
         wxGCDC gdc(gc);
@@ -1820,7 +1817,7 @@ static void TwoDevRegionsNonOverlappingNegDim(wxDC& dc, const wxBitmap& bmp, boo
 
 static void DcAttributes(wxDC& dc)
 {
-    // Check if wxDC atrributes left unchanged
+    // Check if wxDC attributes left unchanged
     wxFont font = dc.GetFont().Bold().Smaller();
     wxPen pen(*wxYELLOW, 2);
     wxBrush brush = *wxBLUE_BRUSH;
@@ -1828,6 +1825,9 @@ static void DcAttributes(wxDC& dc)
     wxDCFontChanger fontChanger(dc, font);
     wxDCPenChanger penChanger(dc, pen);
     wxDCBrushChanger brushChanger(dc, brush);
+    // wxDC may normalize the selected font, so remember the realized font
+    // to check that changing the clipping region leaves it unchanged.
+    wxFont dcFont = dc.GetFont();
     wxCoord chWidth = dc.GetCharWidth();
     wxCoord chHeight = dc.GetCharHeight();
     wxFontMetrics fm = dc.GetFontMetrics();
@@ -1835,7 +1835,7 @@ static void DcAttributes(wxDC& dc)
     dc.SetClippingRegion(10, 20, 30, 40);
     dc.DestroyClippingRegion();
 
-    CHECK(dc.GetFont() == font);
+    CHECK(dc.GetFont() == dcFont);
     CHECK(dc.GetPen() == pen);
     CHECK(dc.GetBrush() == brush);
     CHECK(dc.GetCharWidth() == chWidth);
@@ -3972,16 +3972,18 @@ TEST_CASE("ClippingBoxTestCase::wxPaintDC", "[clip][dc][paintdc]")
     // Ensure window is shown and large enough for testing
     wxTheApp->GetTopWindow()->Raise();
     REQUIRE(wxTheApp->GetTopWindow()->IsShown());
-    wxSize winSize = wxTheApp->GetTopWindow()->GetSize();
+    // Use client, not outer, size: decorations can eat more than the fixed
+    // margin below leaves room for (e.g. GTK3 client-side decorations).
+    wxSize winSize = wxTheApp->GetTopWindow()->GetClientSize();
     winSize.x = wxMax(winSize.x, s_dcSize.x + 50);
     winSize.y = wxMax(winSize.y, s_dcSize.y + 50);
-    wxTheApp->GetTopWindow()->SetSize(winSize);
+    wxTheApp->GetTopWindow()->SetClientSize(winSize);
 #if defined(__WXGTK__)
     // Under wxGTK we need to have two children (at least) because if there
     // is one child its paint area is set to fill the whole parent frame.
-    std::unique_ptr<wxWindow> w0(new wxWindow(wxTheApp->GetTopWindow(), wxID_ANY));
+    auto w0 = make_unique<wxWindow>(wxTheApp->GetTopWindow(), wxID_ANY);
 #endif // wxGTK
-    std::unique_ptr<wxWindow> win(new wxWindow(wxTheApp->GetTopWindow(), wxID_ANY, wxPoint(0, 0)));
+    auto win = make_unique<wxWindow>(wxTheApp->GetTopWindow(), wxID_ANY, wxPoint(0, 0));
     win->SetClientSize(s_dcSize);
 
     // Wait for the first paint event to be sure
@@ -4692,7 +4694,7 @@ static void RegionsAndPushPopState(std::unique_ptr<wxGraphicsContext>& gc, const
         return;
     }
 #endif
-    
+
     // Get rectangle of the entire drawing area.
     double x, y, w, h;
     gc->GetClipBox(&x, &y, &w, &h);

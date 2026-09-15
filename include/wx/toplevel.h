@@ -118,6 +118,20 @@ enum wxContentProtection
     wxCONTENT_PROTECTION_ENABLED
 };
 
+enum class wxWindowMode
+{
+    // Normal, not modal, window.
+    Normal,
+
+    // Modal in parent window scope, i.e. the user must close this window
+    // before being able to interact with the parent window again.
+    WindowModal,
+
+    // Modal in application scope, i.e. the user must close this window
+    // before being able to interact with any other window in the application.
+    AppModal
+};
+
 // ----------------------------------------------------------------------------
 // wxTopLevelWindow: a top level (as opposed to child) window
 // ----------------------------------------------------------------------------
@@ -191,6 +205,10 @@ public:
     virtual void SetTitle(const wxString& title) = 0;
     virtual wxString GetTitle() const = 0;
 
+    // label is the same as title for top-level windows
+    virtual void SetLabel(const wxString& label) override { SetTitle( label ); }
+    virtual wxString GetLabel() const override            { return GetTitle(); }
+
     // enable/disable close button [x]
     virtual bool EnableCloseButton(bool WXUNUSED(enable) = true) { return false; }
     virtual bool EnableMaximizeButton(bool WXUNUSED(enable) = true) { return false; }
@@ -232,44 +250,88 @@ public:
         { return m_winTmpDefault ? m_winTmpDefault : m_winDefault; }
 
     // set the permanent default item, return the old default
-    wxWindow *SetDefaultItem(wxWindow *win)
-        { wxWindow *old = GetDefaultItem(); m_winDefault = win; return old; }
+    wxWindow *SetDefaultItem(wxWindow *win);
 
     // return the temporary default item, can be null
     wxWindow *GetTmpDefaultItem() const { return m_winTmpDefault; }
 
     // set a temporary default item, SetTmpDefaultItem(nullptr) should be called
     // soon after a call to SetTmpDefaultItem(window), return the old default
-    wxWindow *SetTmpDefaultItem(wxWindow *win)
-        { wxWindow *old = GetDefaultItem(); m_winTmpDefault = win; return old; }
+    wxWindow *SetTmpDefaultItem(wxWindow *win);
 
 
-    // Class for saving/restoring fields describing the window geometry.
+    // Class for saving/restoring values describing the window geometry.
     //
     // This class is used by the functions below to allow saving the geometry
     // of the window and restoring it later. The components describing geometry
     // are platform-dependent, so there is no struct containing them and
     // instead the methods of this class are used to save or [try to] restore
     // whichever components are used under the current platform.
-    class GeometrySerializer
+    class GeometryStore
     {
     public:
-        virtual ~GeometrySerializer() = default;
+        virtual ~GeometryStore() = default;
 
-        // If saving a field returns false, it's fatal error and SaveGeometry()
+        // If saving a value returns false, it's fatal error and SaveGeometry()
         // will return false.
-        virtual bool SaveField(const wxString& name, int value) const = 0;
+        virtual bool SaveValue(const wxString& name, int value) = 0;
 
-        // If restoring a field returns false, it just means that the field is
+        // Same as above but for string values, not implemented by default
+        // because this only needs to be implemented when using wxGTK with
+        // Wayland XDG session management protocol and so can be ignored when
+        // not targeting this platform.
+        virtual bool SaveString(const wxString& name, const wxString& value)
+        {
+            wxUnusedVar(name);
+            wxUnusedVar(value);
+            return false;
+        }
+
+        // If restoring a value returns false, it just means that the value is
         // not present and RestoreToGeometry() still continues with restoring
         // the other values.
-        virtual bool RestoreField(const wxString& name, int* value) = 0;
+        virtual bool RestoreValue(const wxString& name, int* value) const = 0;
+
+        // Same as for but for string values, not implemented by default, see
+        // comment for SaveString() above.
+        virtual bool RestoreString(const wxString& name, wxString* value) const
+        {
+            wxUnusedVar(name);
+            wxUnusedVar(value);
+            return false;
+        }
     };
 
     // Save the current window geometry using the provided serializer and
     // restore the window to the previously saved geometry.
-    bool SaveGeometry(const GeometrySerializer& ser) const;
-    bool RestoreToGeometry(GeometrySerializer& ser);
+    bool SaveGeometry(GeometryStore& store) const;
+    bool RestoreToGeometry(const GeometryStore& store);
+
+
+    // Deprecated class using wrong const qualifiers for its member functions,
+    // change your code to use GeometryStore instead and don't use in new code.
+    class wxDEPRECATED_MSG("Use GeometryStore instead") GeometrySerializer
+        : public GeometryStore
+    {
+    public:
+        virtual bool SaveValue(const wxString& name, int value) override
+        {
+            return SaveField(name, value);
+        }
+
+        virtual bool RestoreValue(const wxString& name, int* value) const override
+        {
+            // gcc 4.8 gives a warning for const-cast below.
+            wxGCC_WARNING_SUPPRESS(deprecated-declarations)
+
+            return const_cast<GeometrySerializer*>(this)->RestoreField(name, value);
+
+            wxGCC_WARNING_RESTORE(deprecated-declarations)
+        }
+
+        virtual bool SaveField(const wxString& name, int value) const = 0;
+        virtual bool RestoreField(const wxString& name, int* value) = 0;
+    };
 
 
     // implementation only from now on
@@ -284,6 +346,7 @@ public:
     // override to do TLW-specific layout: we resize our unique child to fill
     // the entire client area
     virtual bool Layout() override;
+    virtual void Fit() override;
 
     // event handlers
     void OnCloseWindow(wxCloseEvent& event);

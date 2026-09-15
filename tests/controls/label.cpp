@@ -20,6 +20,7 @@
 #include "wx/checkbox.h"
 #include "wx/control.h"
 #include "wx/stattext.h"
+#include "wx/textctrl.h"
 
 #include "wx/generic/stattextg.h"
 
@@ -91,32 +92,45 @@ TEST_CASE("wxControl::Label", "[wxControl][label]")
 {
     SECTION("wxStaticText")
     {
-        const std::unique_ptr<wxStaticText>
-            st(new wxStaticText(wxTheApp->GetTopWindow(), wxID_ANY, ORIGINAL_LABEL));
+        const auto st = make_unique<wxStaticText>(wxTheApp->GetTopWindow(),
+                                                  wxID_ANY, ORIGINAL_LABEL);
         DoTestLabel(st.get());
     }
 
     SECTION("wxStaticText/ellipsized")
     {
-        const std::unique_ptr<wxStaticText>
-            st(new wxStaticText(wxTheApp->GetTopWindow(), wxID_ANY, ORIGINAL_LABEL,
-                                wxDefaultPosition, wxDefaultSize,
-                                wxST_ELLIPSIZE_START));
+        const auto st = make_unique<wxStaticText>(wxTheApp->GetTopWindow(),
+                                                  wxID_ANY, ORIGINAL_LABEL,
+                                                  wxDefaultPosition,
+                                                  wxDefaultSize,
+                                                  wxST_ELLIPSIZE_START);
         DoTestLabel(st.get());
     }
 
     SECTION("wxGenericStaticText")
     {
-        const std::unique_ptr<wxGenericStaticText>
-            gst(new wxGenericStaticText(wxTheApp->GetTopWindow(), wxID_ANY, ORIGINAL_LABEL));
+        const auto gst =
+            make_unique<wxGenericStaticText>(wxTheApp->GetTopWindow(),
+                                             wxID_ANY, ORIGINAL_LABEL);
         DoTestLabel(gst.get());
     }
 
     SECTION("wxCheckBox")
     {
-        const std::unique_ptr<wxCheckBox>
-            cb(new wxCheckBox(wxTheApp->GetTopWindow(), wxID_ANY, ORIGINAL_LABEL));
+        const auto cb = make_unique<wxCheckBox>(wxTheApp->GetTopWindow(),
+                                                wxID_ANY, ORIGINAL_LABEL);
         DoTestLabel(cb.get());
+    }
+
+    SECTION("wxTextCtrl")
+    {
+        const auto tc = make_unique<wxTextCtrl>(wxTheApp->GetTopWindow(),
+                                                wxID_ANY, ORIGINAL_LABEL);
+
+        // Setting the label of a wxTextCtrl should _not_ work, it has value
+        // and not a label.
+        WX_ASSERT_FAILS_WITH_ASSERT( tc->SetLabel("something else") );
+        CHECK( tc->GetValue() == ORIGINAL_LABEL );
     }
 }
 

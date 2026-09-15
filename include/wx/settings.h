@@ -80,6 +80,8 @@ enum wxSystemColour
     wxSYS_COLOUR_MENUBAR,
     wxSYS_COLOUR_LISTBOXTEXT,
     wxSYS_COLOUR_LISTBOXHIGHLIGHTTEXT,
+    wxSYS_COLOUR_GRIDLINES,
+    wxSYS_COLOUR_LISTBOXHIGHLIGHT,
 
     wxSYS_COLOUR_MAX,
 
@@ -102,8 +104,9 @@ enum wxSystemMetric
     wxSYS_MOUSE_BUTTONS = 1,
     wxSYS_BORDER_X,
     wxSYS_BORDER_Y,
-    wxSYS_CURSOR_X,
-    wxSYS_CURSOR_Y,
+    wxSYS_CURSOR_X, // Cursors are always square, so these values are always
+    wxSYS_CURSOR_Y, // the same, use wxSYS_CURSOR_SIZE instead.
+    wxSYS_CURSOR_SIZE = wxSYS_CURSOR_Y,
     wxSYS_DCLICK_X,
     wxSYS_DCLICK_Y,
     wxSYS_DRAG_X,
@@ -232,6 +235,11 @@ public:
     {
         return GetAppearance().IsDark() ? colForDark : colForLight;
     }
+
+    // check if the two points are far enough to start a drag operation
+    static bool ExceedsDragThreshold(const wxPoint& origin,
+                                     const wxPoint& current,
+                                     const wxWindow* win = nullptr);
 
     // return true if the port has certain feature
     static bool HasFeature(wxSystemFeature index);

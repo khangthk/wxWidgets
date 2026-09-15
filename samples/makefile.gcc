@@ -24,7 +24,7 @@ MAKEARGS = LINK_DLL_FLAGS="$(LINK_DLL_FLAGS)" \
 	USE_XML="$(USE_XML)" USE_XRC="$(USE_XRC)" USE_AUI="$(USE_AUI)" \
 	USE_RIBBON="$(USE_RIBBON)" USE_PROPGRID="$(USE_PROPGRID)" \
 	USE_RICHTEXT="$(USE_RICHTEXT)" USE_STC="$(USE_STC)" \
-	USE_OPENGL="$(USE_OPENGL)" USE_QA="$(USE_QA)" \
+	USE_LUNASVG="$(USE_LUNASVG)" USE_OPENGL="$(USE_OPENGL)" USE_QA="$(USE_QA)" \
 	USE_EXCEPTIONS="$(USE_EXCEPTIONS)" USE_RTTI="$(USE_RTTI)" \
 	USE_DPI_AWARE_MANIFEST="$(USE_DPI_AWARE_MANIFEST)" \
 	USE_THREADS="$(USE_THREADS)" USE_CAIRO="$(USE_CAIRO)" \
@@ -81,7 +81,7 @@ endif
 
 ### Targets: ###
 
-all: access animate archive artprov $(__aui___depname) calendar caret collpane combo config console dataview dialogs dialup display dll dnd docview dragimag drawing erase event $(__except___depname) exec font grid $(__help___depname) $(__htlbox___depname) $(__html___depname) image internat ipc joytest keyboard layout listctrl mdi $(__mediaplayer___depname) menu minimal nativdlg notebook oleauto opengl ownerdrw popup power preferences printing $(__propgrid___depname) regtest render $(__ribbon___depname) $(__richtext___depname) sashtest scroll secretstore shaped sockets sound $(__splash___depname) splitter statbar $(__stc___depname) svg taborder taskbar text thread toolbar treelist treectrl typetest uiaction validate vscroll $(__webview___depname) webrequest widgets wizard wrapsizer $(__xrc___depname)
+all: access animate archive artprov $(__aui___depname) calendar caret collpane combo config console dataview dialogs dialup display dll dnd docview dragimag drawing erase event $(__except___depname) exec font grid $(__help___depname) $(__htlbox___depname) $(__html___depname) image internat ipc joytest keyboard layout listctrl mdi $(__mediaplayer___depname) menu minimal nativdlg notebook oleauto opengl ownerdrw popup power preferences printing $(__propgrid___depname) regtest render $(__ribbon___depname) $(__richtext___depname) sashtest scroll secretstore shaped sockets sound $(__splash___depname) splitter statbar $(__stc___depname) svg stylus taborder taskbar text thread toolbar touchtest treelist treectrl typetest uiaction validate vscroll $(__webview___depname) webrequest widgets wizard wrapsizer $(__xrc___depname)
 
 clean: 
 	-if exist .\*.o del .\*.o
@@ -151,11 +151,13 @@ clean:
 	$(MAKE) -C statbar -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C stc -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C svg -f makefile.gcc $(MAKEARGS) clean
+	$(MAKE) -C stylus -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C taborder -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C taskbar -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C text -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C thread -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C toolbar -f makefile.gcc $(MAKEARGS) clean
+	$(MAKE) -C touchtest -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C treelist -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C treectrl -f makefile.gcc $(MAKEARGS) clean
 	$(MAKE) -C typetest -f makefile.gcc $(MAKEARGS) clean
@@ -388,6 +390,9 @@ endif
 svg: 
 	$(MAKE) -C svg -f makefile.gcc $(MAKEARGS) all
 
+stylus: 
+	$(MAKE) -C stylus -f makefile.gcc $(MAKEARGS) all
+
 taborder: 
 	$(MAKE) -C taborder -f makefile.gcc $(MAKEARGS) all
 
@@ -402,6 +407,9 @@ thread:
 
 toolbar: 
 	$(MAKE) -C toolbar -f makefile.gcc $(MAKEARGS) all
+
+touchtest: 
+	$(MAKE) -C touchtest -f makefile.gcc $(MAKEARGS) all
 
 treelist: 
 	$(MAKE) -C treelist -f makefile.gcc $(MAKEARGS) all
@@ -451,8 +459,9 @@ endif
 	keyboard layout listctrl mdi mediaplayer menu minimal nativdlg notebook oleauto \
 	opengl ownerdrw popup power preferences printing propgrid regtest render ribbon \
 	richtext sashtest scroll secretstore shaped sockets sound splash splitter statbar \
-	stc svg taborder taskbar text thread toolbar treelist treectrl typetest uiaction \
-	validate vscroll webview webrequest widgets wizard wrapsizer xrc
+	stc svg stylus taborder taskbar text thread toolbar touchtest treelist treectrl \
+	typetest uiaction validate vscroll webview webrequest widgets wizard wrapsizer \
+	xrc
 
 
 SHELL := $(COMSPEC)

@@ -15,6 +15,7 @@
 
 #include "wx/ribbon/art.h"
 #include "wx/ribbon/control.h"
+#include "wx/bmpbndl.h"
 
 class wxRibbonGalleryItem;
 
@@ -44,9 +45,9 @@ public:
     bool IsEmpty() const;
     unsigned int GetCount() const;
     wxRibbonGalleryItem* GetItem(unsigned int n);
-    wxRibbonGalleryItem* Append(const wxBitmap& bitmap, int id);
-    wxRibbonGalleryItem* Append(const wxBitmap& bitmap, int id, void* clientData);
-    wxRibbonGalleryItem* Append(const wxBitmap& bitmap, int id, wxClientData* clientData);
+    wxRibbonGalleryItem* Append(const wxBitmapBundle& bitmap, int id);
+    wxRibbonGalleryItem* Append(const wxBitmapBundle& bitmap, int id, void* clientData);
+    wxRibbonGalleryItem* Append(const wxBitmapBundle& bitmap, int id, wxClientData* clientData);
 
     void SetItemClientObject(wxRibbonGalleryItem* item, wxClientData* data);
     wxClientData* GetItemClientObject(const wxRibbonGalleryItem* item) const;
@@ -70,6 +71,10 @@ public:
     bool ScrollPixels(int pixels);
     void EnsureVisible(const wxRibbonGalleryItem* item);
 
+    // KeyTips (keyboard access mode).
+    void SetKeyTip(const wxString& keytip) { m_keyTip = keytip.Upper(); }
+    wxString GetKeyTip() const { return m_keyTip; }
+
 protected:
     wxBorder GetDefaultBorder() const override { return wxBORDER_NONE; }
     void CommonInit(long style);
@@ -86,6 +91,8 @@ protected:
     void OnMouseDClick(wxMouseEvent& evt);
     void OnPaint(wxPaintEvent& evt);
     void OnSize(wxSizeEvent& evt);
+    void OnDPIChanged(wxDPIChangedEvent& evt);
+    void OnSysColourChanged(wxSysColourChangedEvent& evt);
     int GetScrollLineSize() const;
 
     virtual wxSize DoGetBestSize() const override;
@@ -95,9 +102,9 @@ protected:
                                        wxSize relative_to) const override;
 
     wxArrayRibbonGalleryItem m_items;
-    wxRibbonGalleryItem* m_selected_item;
-    wxRibbonGalleryItem* m_hovered_item;
-    wxRibbonGalleryItem* m_active_item;
+    wxRibbonGalleryItem* m_selected_item = nullptr;
+    wxRibbonGalleryItem* m_hovered_item = nullptr;
+    wxRibbonGalleryItem* m_active_item = nullptr;
     wxSize m_bitmap_size;
     wxSize m_bitmap_padded_size;
     wxSize m_best_size;
@@ -106,14 +113,17 @@ protected:
     wxRect m_scroll_down_button_rect;
     wxRect m_extension_button_rect;
     const wxRect* m_mouse_active_rect = nullptr;
-    int m_item_separation_x;
-    int m_item_separation_y;
-    int m_scroll_amount;
-    int m_scroll_limit;
-    wxRibbonGalleryButtonState m_up_button_state;
-    wxRibbonGalleryButtonState m_down_button_state;
-    wxRibbonGalleryButtonState m_extension_button_state;
-    bool m_hovered;
+    int m_item_separation_x = 0;
+    int m_item_separation_y = 0;
+    int m_scroll_amount = 0;
+    int m_scroll_limit = 0;
+    wxRibbonGalleryButtonState m_up_button_state = wxRIBBON_GALLERY_BUTTON_DISABLED;
+    wxRibbonGalleryButtonState m_down_button_state = wxRIBBON_GALLERY_BUTTON_NORMAL;
+    wxRibbonGalleryButtonState m_extension_button_state = wxRIBBON_GALLERY_BUTTON_NORMAL;
+    bool m_hovered = false;
+
+    // Always stored in upper case, to allow case-insensitive matching.
+    wxString m_keyTip;
 
 #ifndef SWIG
     wxDECLARE_CLASS(wxRibbonGallery);
@@ -139,7 +149,7 @@ public:
         m_item = e.m_item;
     }
 #endif
-    wxEvent *Clone() const override { return new wxRibbonGalleryEvent(*this); }
+    wxNODISCARD wxEvent *Clone() const override { return new wxRibbonGalleryEvent(*this); }
 
     wxRibbonGallery* GetGallery() {return m_gallery;}
     wxRibbonGalleryItem* GetGalleryItem() {return m_item;}

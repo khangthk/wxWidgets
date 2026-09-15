@@ -4,6 +4,7 @@
 // Author:      Vaclav Slavik
 // Created:     25/09/99
 // Copyright:   (c) Vaclav Slavik, 1999
+//              (c) 2026 wxWidgets development team
 // Licence:     wxWindows licence
 /////////////////////////////////////////////////////////////////////////////
 
@@ -29,7 +30,9 @@
 #include "wx/wxhtml.h"
 #include "wx/wfstream.h"
 #include "wx/infobar.h"
+#include "wx/numformatter.h"
 
+#include <limits>
 
 // default font size of normal text (HTML font size 0) for printing, in points:
 #define DEFAULT_PRINT_FONT_SIZE   12
@@ -110,6 +113,10 @@ void wxHtmlDCRenderer::SetHtmlText(const wxString& html, const wxString& basepat
     wxHtmlContainerCell* const cell = (wxHtmlContainerCell*) m_Parser.Parse(html);
     wxCHECK_RET( cell, "Failed to parse HTML" );
 
+    const wxColour bg = m_Parser.GetActualBackgroundColor();
+    if ( bg.IsOk() )
+        cell->SetBackgroundColour(bg);
+
     DoSetHtmlCell(cell);
 
     m_ownsCells = true;
@@ -180,13 +187,20 @@ void wxHtmlDCRenderer::Render(int x, int y, int from, int to)
 {
     wxCHECK_RET( m_DC, "SetDC() must be called before Render()" );
 
-    const int hght = to == INT_MAX ? m_Height : to - from;
+    const int hght = to == std::numeric_limits<int>::max() ? m_Height : to - from;
 
     wxHtmlRenderingInfo rinfo;
     wxDefaultHtmlRenderingStyle rstyle;
     rinfo.SetStyle(&rstyle);
-    m_DC->SetBrush(*wxWHITE_BRUSH);
     wxDCClipper clip(*m_DC, x, y, m_Width, hght);
+    {
+        wxColour bg = m_Cells->GetBackgroundColour();
+        if ( !bg.IsOk() )
+            bg = *wxWHITE;
+        wxDCBrushChanger brushChanger(*m_DC, wxBrush(bg));
+        wxDCPenChanger penChanger(*m_DC, *wxTRANSPARENT_PEN);
+        m_DC->DrawRectangle(x, y, m_Width, hght);
+    }
     m_Cells->Draw(*m_DC,
                   x, (y - from),
                   y, y + hght,
@@ -223,8 +237,8 @@ wxHtmlPrintout::wxHtmlPrintout(const wxString& title) : wxPrintout(title)
 
 void wxHtmlPrintout::CleanUpStatics()
 {
-    for ( size_t n = 0; n < m_Filters.size(); ++n )
-        delete m_Filters[n];
+    for ( auto* filter : m_Filters )
+        delete filter;
 
     m_Filters.clear();
 }
@@ -405,11 +419,11 @@ void wxHtmlPrintout::GetPageInfo(int *minPage, int *maxPage, int *selPageFrom, i
 {
     *minPage = 1;
     if ( m_PageBreaks.empty() )
-        *maxPage = INT_MAX;
+        *maxPage = std::numeric_limits<int>::max();
     else
-        *maxPage = (signed)m_PageBreaks.size()-1;
+        *maxPage = wxSsize(m_PageBreaks)-1;
     *selPageFrom = 1;
-    *selPageTo = (signed)m_PageBreaks.size()-1;
+    *selPageTo = *maxPage;
 }
 
 
@@ -448,9 +462,8 @@ void wxHtmlPrintout::SetHtmlFile(const wxString& htmlfile)
     wxHtmlFilterHTML defaultFilter;
     wxString doc;
 
-    for ( size_t n = 0; n < m_Filters.size(); ++n )
+    for ( auto* h : m_Filters )
     {
-        wxHtmlFilter* const h = m_Filters[n];
         if (h->CanRead(*ff))
         {
             doc = h->ReadFile(*ff);
@@ -543,12 +556,16 @@ void wxHtmlPrintout::RenderPage(wxDC *dc, int page)
     if (!m_Headers[page % 2].empty())
     {
         m_RendererHdr.SetHtmlText(TranslateHeader(m_Headers[page % 2], page));
-        m_RendererHdr.Render((int) (ppmm_h * m_MarginLeft), (int) (ppmm_v * m_MarginTop));
+        m_RendererHdr.Render((int) (ppmm_h * m_MarginLeft),
+                             (int) (ppmm_v * m_MarginTop),
+                             0, m_HeaderHeight);
     }
     if (!m_Footers[page % 2].empty())
     {
         m_RendererHdr.SetHtmlText(TranslateHeader(m_Footers[page % 2], page));
-        m_RendererHdr.Render((int) (ppmm_h * m_MarginLeft), (int) (pageHeight - ppmm_v * m_MarginBottom - m_FooterHeight));
+        m_RendererHdr.Render((int) (ppmm_h * m_MarginLeft),
+                             (int) (pageHeight - ppmm_v * m_MarginBottom - m_FooterHeight),
+                             0, m_FooterHeight);
     }
 }
 
@@ -557,24 +574,27 @@ void wxHtmlPrintout::RenderPage(wxDC *dc, int page)
 wxString wxHtmlPrintout::TranslateHeader(const wxString& instr, int page)
 {
     wxString r = instr;
-    wxString num;
 
-    num.Printf(wxT("%i"), page);
-    r.Replace(wxT("@PAGENUM@"), num);
+    r.Replace("@PAGENUM@",
+        wxNumberFormatter::ToString(page, 0,
+            wxNumberFormatter::Style::Style_WithThousandsSep));
 
-    num.Printf(wxT("%lu"), (unsigned long)(m_PageBreaks.size() - 1));
-    r.Replace(wxT("@PAGESCNT@"), num);
+    r.Replace("@PAGESCNT@",
+        wxNumberFormatter::ToString(m_PageBreaks.empty() ? 1 : m_PageBreaks.size() - 1, 0,
+            wxNumberFormatter::Style::Style_WithThousandsSep));
 
 #if wxUSE_DATETIME
     const wxDateTime now = wxDateTime::Now();
-    r.Replace(wxT("@DATE@"), now.FormatDate());
-    r.Replace(wxT("@TIME@"), now.FormatTime());
+    r.Replace("@DATE@", now.FormatDate());
+    r.Replace("@TIME@", now.FormatTime());
 #else
-    r.Replace(wxT("@DATE@"), wxEmptyString);
-    r.Replace(wxT("@TIME@"), wxEmptyString);
+    r.Replace("@DATE@", wxEmptyString);
+    r.Replace("@TIME@", wxEmptyString);
 #endif
 
-    r.Replace(wxT("@TITLE@"), GetTitle());
+    r.Replace("@USER@", wxGetUserName());
+
+    r.Replace("@TITLE@", GetTitle());
 
     return r;
 }
@@ -709,8 +729,9 @@ bool wxHtmlEasyPrinting::DoPreview(wxHtmlPrintout *printout1, wxHtmlPrintout *pr
     }
 
     wxPreviewFrame *frame = new wxPreviewFrame(preview, m_ParentWindow,
-                                               m_Name + _(" Preview"),
-                                               wxPoint(100, 100), wxSize(650, 500));
+                                wxString::Format(/* TRANSLATORS: %s may be a document title. */_("%s Preview"), m_Name),
+                                wxDefaultPosition,
+                                wxWindow::FromDIP(wxSize(650, 500), m_ParentWindow));
     frame->Centre(wxBOTH);
     frame->Initialize();
     frame->Show(true);

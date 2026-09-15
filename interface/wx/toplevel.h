@@ -40,6 +40,18 @@ enum
                           wxFULLSCREEN_NOCAPTION
 };
 
+/**
+    Possible parameters for wxFrame::SetWindowModality().
+
+    @since 3.3.2
+*/
+enum class wxWindowMode
+{
+    Normal,      ///< Show the frame non-modally, and this is the default.
+    WindowModal, ///< Disable only the parent window while the frame is shown.
+    AppModal     ///< Disable all the other TLWs while the frame is shown.
+};
+
 #define wxDEFAULT_FRAME_STYLE (wxSYSTEM_MENU |          \
                                wxRESIZE_BORDER |        \
                                wxMINIMIZE_BOX |         \
@@ -60,7 +72,7 @@ enum
     internal top level window list.
 
     @beginEventEmissionTable
-    @event{EVT_MAXIMIZE(id, func)}
+    @event{EVT_MAXIMIZE(func)}
         Process a @c wxEVT_MAXIMIZE event. See wxMaximizeEvent.
     @event{EVT_MOVE(func)}
         Process a @c wxEVT_MOVE event, which is generated when a window is moved.
@@ -75,7 +87,7 @@ enum
         See wxMoveEvent.
     @event{EVT_SHOW(func)}
         Process a @c wxEVT_SHOW event. See wxShowEvent.
-    @event{EVT_FULLSCREEN(id, func)}
+    @event{EVT_FULLSCREEN(func)}
         Process a @c wxEVT_FULLSCREEN event. See wxFullScreenEvent.
     @endEventTable
 
@@ -228,6 +240,17 @@ public:
     const wxIconBundle& GetIcons() const;
 
     /**
+        Get the window title.
+
+        This base class function is overridden in this class to behave as
+        GetTitle() and is useful when having only a `wxWindow*` pointer.
+
+        Please call GetTitle() directly instead of this function for clarity if
+        possible.
+     */
+    virtual wxString GetLabel() const;
+
+    /**
         Gets a string containing the window title.
 
         @see SetTitle()
@@ -361,10 +384,11 @@ public:
         @note This function should normally be only used when the application
               is not already in foreground.
 
-        This function is currently implemented for Win32 where it flashes
-        the window icon in the taskbar, and for wxGTK with task bars
-        supporting it.
-
+        This function is currently implemented under Windows where it flashes
+        the window icon in the taskbar, and in wxGTK, but its behaviour there
+        depends on support from the desktop environment or window manager: if
+        the current environment does not support window urgency hints, calling
+        this function has no visible effect.
     */
     virtual void RequestUserAttention(int flags = wxUSER_ATTENTION_INFO);
 
@@ -384,16 +408,16 @@ public:
         Class used with SaveGeometry() and RestoreToGeometry().
 
         This is an abstract base class, i.e. to use it you must define a
-        derived class implementing the pure virtual SaveField() and
-        RestoreField() methods.
+        derived class implementing the pure virtual SaveValue() and
+        RestoreValue() methods.
 
         For example, if you wished to store the window geometry in a database,
         you could derive a class saving fields such as "width" or "height" in a
         table in this database and restoring them from it later.
 
-        @since 3.1.2
+        @since 3.3.0
      */
-    class GeometrySerializer
+    class GeometryStore
     {
         /**
             Save a single field with the given value.
@@ -410,12 +434,30 @@ public:
             @return @true if the field was saved or @false if saving it failed,
                 resulting in wxTopLevelWindow::SaveGeometry() failure.
          */
-        virtual bool SaveField(const wxString& name, int value) const = 0;
+        virtual bool SaveValue(const wxString& name, int value) = 0;
+
+        /**
+            Save a single field with the given string value.
+
+            This function is similar to SaveValue(), but is currently only used
+            when using wxGTK with Wayland XDG session management protocol and
+            so can be left unimplemented when not targeting this platform.
+
+            @param name uniquely identifies the field but is otherwise
+                arbitrary.
+            @param value value of the field, currently always non-empty.
+
+            @return @true if the field was saved or @false if saving it failed,
+                resulting in wxTopLevelWindow::SaveGeometry() failure.
+
+            @since 3.3.4
+         */
+        virtual bool SaveString(const wxString& name, const wxString& value);
 
         /**
             Try to restore a single field.
 
-            Unlike for SaveField(), returning @false from this function may
+            Unlike for SaveValue(), returning @false from this function may
             indicate that the value simply wasn't present and doesn't prevent
             RestoreToGeometry() from continuing with trying to restore the
             other values.
@@ -427,7 +469,25 @@ public:
             @return @true if the value was retrieved or @false if it wasn't
                 found or an error occurred.
          */
-        virtual bool RestoreField(const wxString& name, int* value) = 0;
+        virtual bool RestoreValue(const wxString& name, int* value) const = 0;
+
+        /**
+            Try to restore a single string-valued field.
+
+            This function is similar to RestoreValue(), but is currently only
+            used when using wxGTK with Wayland XDG session management protocol
+            and so can be left unimplemented when not targeting this platform.
+
+            @param name uniquely identifies the field.
+            @param value non-null pointer to the value to be filled by this
+                function.
+
+            @return @true if the field was retrieved or @false if it wasn't
+                found or an error occurred,
+
+            @since 3.3.4
+         */
+        virtual bool RestoreString(const wxString& name, wxString* value) const;
     };
 
     /**
@@ -436,7 +496,7 @@ public:
         This is a companion function to SaveGeometry() and can be called later
         to restore the window to the geometry it had when it was saved.
 
-        @param ser An object implementing GeometrySerializer virtual methods.
+        @param ser An object implementing GeometryStore virtual methods.
 
         @return @true if any (and, usually, but not necessarily, all) of the
             window geometry attributes were restored or @false if there was no
@@ -444,7 +504,7 @@ public:
 
         @since 3.1.2
      */
-    bool RestoreToGeometry(GeometrySerializer& ser);
+    bool RestoreToGeometry(const GeometryStore& ser);
 
     /**
         Save the current window geometry to allow restoring it later.
@@ -460,13 +520,13 @@ public:
         simplest possible way. However is more flexibility is required, it can
         be also used directly with a custom serializer object.
 
-        @param ser An object implementing GeometrySerializer virtual methods.
+        @param ser An object implementing GeometryStore virtual methods.
 
         @return @true if the geometry was saved, @false if doing it failed
 
         @since 3.1.2
      */
-    bool SaveGeometry(const GeometrySerializer& ser) const;
+    bool SaveGeometry(GeometryStore& ser) const;
 
     /**
         Changes the default item for the panel, usually @a win is a button.
@@ -492,6 +552,11 @@ public:
 
         @note In wxMSW, @a icon must be either 16x16 or 32x32 icon.
 
+        @note In wxGTK this function currently doesn't do anything when using
+            Wayland, which doesn't allow setting the icon for a window. Please
+            create a `.desktop` file for your application to set the icon for
+            its windows.
+
         @see wxIcon, SetIcons()
     */
     void SetIcon(const wxIcon& icon);
@@ -507,6 +572,11 @@ public:
 
         @note In wxMSW, @a icons must contain a 16x16 or 32x32 icon,
               preferably both.
+
+        @note In wxGTK this function currently doesn't do anything when using
+            Wayland, which doesn't allow setting the icon for a window. Please
+            create a `.desktop` file for your application to set the icon for
+            its windows.
 
         @see wxIconBundle
     */
@@ -571,6 +641,20 @@ public:
     void SetSizeHints(const wxSize& minSize,
                       const wxSize& maxSize = wxDefaultSize,
                       const wxSize& incSize = wxDefaultSize);
+
+    /**
+        Sets the window title.
+
+        This base class function is overridden in this class to behave as
+        SetTitle() and is useful when having only a `wxWindow*` pointer.
+
+        Please call SetTitle() directly instead of this function for clarity if
+        possible.
+
+        @param title
+            The window title.
+     */
+    virtual void SetLabel(const wxString& title);
 
     /**
         Sets the window title.
@@ -650,6 +734,9 @@ public:
     /**
         Enables the zoom button to toggle full screen mode.
 
+        This function is currently only implemented in wxOSX and simply returns
+        @false in the other ports.
+
         A wxFullScreenEvent is generated when the users enters or exits
         full screen via the enter/exit full screen button.
 
@@ -662,7 +749,7 @@ public:
             for possible values. It is available since wxWidgets 3.1.6.
 
         @return @true if the button behaviour has been changed, @false if running
-        under another OS.
+        under unsupported OS.
 
         @note Having the button is also required to let ShowFullScreen()
         make use of the full screen API: a full screen window gets its own space
@@ -671,8 +758,6 @@ public:
         is used.
         Only @c ::wxFULLSCREEN_NOTOOLBAR and @c ::wxFULLSCREEN_NOMENUBAR will be
         used when using the fullscreen API (other values are ignored).
-
-        @onlyfor{wxosx}
 
         @see ShowFullScreen(), wxFullScreenEvent
 

@@ -116,7 +116,7 @@ wxCONSTRUCTOR_5( wxComboBox, wxWindow*, Parent, wxWindowID, Id, \
 
 #define BMP_BUTTON_MARGIN                       4
 
-#define DEFAULT_POPUP_HEIGHT                    400
+#define DEFAULT_POPUP_ITEMS                     21
 
 #define DEFAULT_TEXT_INDENT                     3
 
@@ -1386,18 +1386,15 @@ bool wxComboCtrlBase::SetForegroundColour(const wxColour& colour)
 
 bool wxComboCtrlBase::SetBackgroundColour(const wxColour& colour)
 {
+    if ( !wxControl::SetBackgroundColour(colour) )
+        return false;
+
     if ( m_mainWindow )
         m_mainWindow->SetBackgroundColour(colour);
+
     m_tcBgCol = colour;
     m_hasTcBgCol = true;
     return true;
-}
-
-wxColour wxComboCtrlBase::GetBackgroundColour() const
-{
-    if ( m_mainWindow )
-        return m_mainWindow->GetBackgroundColour();
-    return m_tcBgCol;
 }
 
 // ----------------------------------------------------------------------------
@@ -1653,9 +1650,16 @@ void wxComboCtrlBase::OnTextCtrlEvent(wxCommandEvent& event)
     wxCommandEvent evt2(event);
     evt2.SetId(GetId());
     evt2.SetEventObject(this);
-    HandleWindowEvent(evt2);
 
+    // Stop propagating the original event in any case, parent window will get
+    // evt2 and we don't want to send both to it.
     event.StopPropagation();
+
+    // But still allow the original event to be processed by this control
+    // itself if the application didn't handle it, e.g. to allow using "Enter"
+    // to close the dialog containing this control.
+    if ( !HandleWindowEvent(evt2) )
+        event.Skip();
 }
 
 // call if cursor is on button area or mouse is captured for the button
@@ -1808,7 +1812,7 @@ void wxComboCtrlBase::HandleNormalMouseEvent( wxMouseEvent& event )
             // relay (some) mouse events to the popup
             m_popup->GetEventHandler()->ProcessEvent(event);
         }
-        else if ( event.GetWheelAxis() == 0 &&
+        else if ( event.GetWheelAxis() == wxMOUSE_WHEEL_VERTICAL &&
                   event.GetWheelRotation() != 0 &&
                   event.GetModifiers() == 0 )
         {
@@ -2159,8 +2163,13 @@ void wxComboCtrlBase::ShowPopup()
 
     wxASSERT( !m_popup || m_popup == popup ); // Consistency check.
 
+    int heightPopup = m_heightPopup;
+    if (heightPopup <= 0)
+        // estimated height for a row containig text
+        heightPopup = DEFAULT_POPUP_ITEMS * (GetCharHeight() + FromDIP(4));
+
     wxSize adjustedSize = m_popupInterface->GetAdjustedSize(widthPopup,
-                                                            m_heightPopup<=0?DEFAULT_POPUP_HEIGHT:m_heightPopup,
+                                                            heightPopup,
                                                             maxHeightPopup);
 
     popup->SetSize(adjustedSize);

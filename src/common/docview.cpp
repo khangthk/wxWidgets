@@ -56,7 +56,6 @@
 #include "wx/vector.h"
 #include "wx/scopedarray.h"
 #include "wx/scopeguard.h"
-#include "wx/except.h"
 
 #if wxUSE_STD_IOSTREAM
     #include "wx/beforestd.h"
@@ -625,13 +624,27 @@ void wxDocument::OnChangedViewList()
 
 void wxDocument::UpdateAllViews(wxView *sender, wxObject *hint)
 {
-    wxList::compatibility_iterator node = m_documentViews.GetFirst();
-    while (node)
+    // wxView::OnUpdate() may remove the view it's called on (relatively common)
+    // or, potentially, even another view from the document, so make a
+    // copy of the existing view container before starting to iterate
+    // over it.
+    const wxViewVector initialState = GetViewsVector();
+    for (wxView * const view : initialState)
     {
-        wxView *view = (wxView *)node->GetData();
         if (view != sender)
-            view->OnUpdate(sender, hint);
-        node = node->GetNext();
+        {
+            wxList::compatibility_iterator node = m_documentViews.GetFirst();
+            while (node)
+            {
+                wxView * const present = (wxView *)node->GetData();
+                if (present == view)
+                {
+                    view->OnUpdate(sender, hint);
+                    break;
+                }
+                node = node->GetNext();
+            }
+        }
     }
 }
 
@@ -894,16 +907,8 @@ wxDocument *wxDocTemplate::CreateDocument(const wxString& path, long flags)
 bool
 wxDocTemplate::InitDocument(wxDocument* doc, const wxString& path, long flags)
 {
-    wxTRY
+    wxScopeGuard guard = wxMakeGuard([&, this]()
     {
-        doc->SetFilename(path);
-        doc->SetDocumentTemplate(this);
-        GetDocumentManager()->AddDocument(doc);
-        doc->SetCommandProcessor(doc->OnCreateCommandProcessor());
-
-        if ( doc->OnCreate(path, flags) )
-            return true;
-
         // The document may be already destroyed, this happens if its view
         // creation fails as then the view being created is destroyed
         // triggering the destruction of the document as this first view is
@@ -912,14 +917,19 @@ wxDocTemplate::InitDocument(wxDocument* doc, const wxString& path, long flags)
         // to clean it up ourselves to avoid having a zombie document.
         if ( GetDocumentManager()->GetDocuments().Member(doc) )
             doc->DeleteAllViews();
+    });
 
+    doc->SetFilename(path);
+    doc->SetDocumentTemplate(this);
+    GetDocumentManager()->AddDocument(doc);
+    doc->SetCommandProcessor(doc->OnCreateCommandProcessor());
+
+    if ( !doc->OnCreate(path, flags) )
         return false;
-    }
-    wxCATCH_ALL(
-        if ( GetDocumentManager()->GetDocuments().Member(doc) )
-            doc->DeleteAllViews();
-        throw;
-    )
+
+    guard.Dismiss();
+
+    return true;
 }
 
 wxView *wxDocTemplate::CreateView(wxDocument *doc, long flags)
@@ -1452,12 +1462,9 @@ wxDocTemplateVector GetVisibleTemplates(const wxList& allTemplates)
     {
         templates.reserve(totalNumTemplates);
 
-        for ( wxList::const_iterator i = allTemplates.begin(),
-                                   end = allTemplates.end();
-              i != end;
-              ++i )
+        for ( auto* item : allTemplates )
         {
-            wxDocTemplate * const temp = (wxDocTemplate *)*i;
+            wxDocTemplate * const temp = (wxDocTemplate *)item;
             if ( temp->IsVisible() )
                 templates.push_back(temp);
         }
@@ -1482,9 +1489,9 @@ void wxDocument::Activate()
 wxDocument* wxDocManager::FindDocumentByPath(const wxString& path) const
 {
     const wxFileName fileName(path);
-    for ( wxList::const_iterator i = m_docs.begin(); i != m_docs.end(); ++i )
+    for ( const auto* item : m_docs )
     {
-        wxDocument * const doc = wxStaticCast(*i, wxDocument);
+        wxDocument * const doc = wxStaticCast(item, wxDocument);
 
         if ( fileName == wxFileName(doc->GetFilename()) )
             return doc;
@@ -1568,18 +1575,17 @@ wxDocument *wxDocManager::CreateDocument(const wxString& pathOrig, long flags)
 
     docNew->SetDocumentName(temp->GetDocumentName());
 
-    wxTRY
+    wxScopeGuard guard = wxMakeObjGuard(*docNew, &wxDocument::DeleteAllViews);
+
+    // call the appropriate function depending on whether we're creating a
+    // new file or opening an existing one
+    if ( !(flags & wxDOC_NEW ? docNew->OnNewDocument()
+                             : docNew->OnOpenDocument(path)) )
     {
-        // call the appropriate function depending on whether we're creating a
-        // new file or opening an existing one
-        if ( !(flags & wxDOC_NEW ? docNew->OnNewDocument()
-                                 : docNew->OnOpenDocument(path)) )
-        {
-            docNew->DeleteAllViews();
-            return nullptr;
-        }
+        return nullptr;
     }
-    wxCATCH_ALL( docNew->DeleteAllViews(); throw; )
+
+    guard.Dismiss();
 
     // add the successfully opened file to MRU, but only if we're going to be
     // able to reopen it successfully later which requires the template for

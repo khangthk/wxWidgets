@@ -36,6 +36,7 @@
 #if wxUSE_STD_CONTAINERS
     #include "wx/beforestd.h"
     #include <algorithm>
+    #include <cstddef>
     #include <iterator>
     #include <list>
     #include "wx/afterstd.h"
@@ -120,6 +121,11 @@ public:
             { return m_list ? m_iter != m_list->end() : false; }
         bool operator !() const
             { return !( operator bool() ); }
+
+        bool operator==(std::nullptr_t) const
+            { return !*this; }
+        bool operator!=(std::nullptr_t) const
+            { return !(*this == nullptr); }
 
         elT GetData() const
             { return *m_iter; }
@@ -1180,9 +1186,9 @@ public:
         wxVector<T> vector(size());
         size_t i = 0;
 
-        for ( const_iterator it = begin(); it != end(); ++it )
+        for ( const auto& elem : *this )
         {
-            vector[i++] = static_cast<T>(*it);
+            vector[i++] = static_cast<T>(elem);
         }
 
         return vector;

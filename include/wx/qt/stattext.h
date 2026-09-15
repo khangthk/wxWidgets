@@ -23,6 +23,8 @@ public:
                  long style = 0,
                  const wxString &name = wxASCII_STR(wxStaticTextNameStr) );
 
+    ~wxStaticText();
+
     bool Create(wxWindow *parent,
                 wxWindowID id,
                 const wxString &label,
@@ -38,6 +40,10 @@ public:
 protected:
     virtual wxString WXGetVisibleLabel() const override;
     virtual void WXSetVisibleLabel(const wxString& str) override;
+
+#if wxUSE_MARKUP
+    virtual bool DoSetLabelMarkup(const wxString& markup) override;
+#endif // wxUSE_MARKUP
 
     wxDECLARE_DYNAMIC_CLASS(wxStaticText);
 };

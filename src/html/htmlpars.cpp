@@ -462,7 +462,7 @@ wxString wxHtmlEntitiesParser::Parse(const wxString& input) const
 
             for ( ; c != end; ++c )
             {
-                wxChar ch = *c;
+                wxUniChar ch = *c;
                 if ( !((ch >= wxT('a') && ch <= wxT('z')) ||
                        (ch >= wxT('A') && ch <= wxT('Z')) ||
                        (ch >= wxT('0') && ch <= wxT('9')) ||
@@ -555,6 +555,7 @@ wxChar wxHtmlEntitiesParser::GetEntityChar(const wxString& entity) const
             ENTITY("Chi", 935),
             ENTITY("Dagger", 8225),
             ENTITY("Delta", 916),
+            ENTITY("Dstrok", 272),
             ENTITY("ETH", 208),
             ENTITY("Eacute", 201),
             ENTITY("Ecirc", 202),
@@ -639,6 +640,7 @@ wxChar wxHtmlEntitiesParser::GetEntityChar(const wxString& entity) const
             ENTITY("delta", 948),
             ENTITY("diams", 9830),
             ENTITY("divide", 247),
+            ENTITY("dstrok", 273),
             ENTITY("eacute", 233),
             ENTITY("ecirc", 234),
             ENTITY("egrave", 232),
@@ -868,6 +870,14 @@ bool wxMetaTagHandler::HandleTag(const wxHtmlTag& tag)
         return false;
     }
 
+    // HTML 5 charset
+    if (tag.GetParamAsString(wxT("charset"), m_retval))
+    {
+        m_Parser->StopParsing();
+        return false;
+    }
+
+    // HTML 4 charset
     wxString httpEquiv,
              content;
     if (tag.GetParamAsString(wxT("HTTP-EQUIV"), &httpEquiv) &&
@@ -927,7 +937,7 @@ wxHtmlParser::SkipCommentTag(wxString::const_iterator& start,
     int dashes = 0;
     while ( ++p < end )
     {
-        const wxChar c = *p;
+        const wxUniChar c = *p;
 
         if ( (c == wxT(' ') || c == wxT('\n') ||
               c == wxT('\r') || c == wxT('\t')) && dashes >= 2 )

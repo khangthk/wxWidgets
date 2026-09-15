@@ -30,8 +30,8 @@ class wxRibbonToolBarToolBase
 {
 public:
     wxString help_string;
-    wxBitmap bitmap;
-    wxBitmap bitmap_disabled;
+    wxBitmapBundle bitmap;
+    wxBitmapBundle bitmap_disabled;
     wxRect dropdown;
     wxPoint position;
     wxSize size;
@@ -70,6 +70,8 @@ wxBEGIN_EVENT_TABLE(wxRibbonToolBar, wxRibbonControl)
     EVT_MOTION(wxRibbonToolBar::OnMouseMove)
     EVT_PAINT(wxRibbonToolBar::OnPaint)
     EVT_SIZE(wxRibbonToolBar::OnSize)
+    EVT_DPI_CHANGED(wxRibbonToolBar::OnDPIChanged)
+    EVT_SYS_COLOUR_CHANGED(wxRibbonToolBar::OnSysColourChanged)
 wxEND_EVENT_TABLE()
 
 wxRibbonToolBar::wxRibbonToolBar()
@@ -133,44 +135,44 @@ wxRibbonToolBar::~wxRibbonToolBar()
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::AddTool(
                 int tool_id,
-                const wxBitmap& bitmap,
+                const wxBitmapBundle& bitmap,
                 const wxString& help_string,
                 wxRibbonButtonKind kind)
 {
-    return AddTool(tool_id, bitmap, wxNullBitmap, help_string, kind, nullptr);
+    return AddTool(tool_id, bitmap, wxBitmapBundle(), help_string, kind, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::AddDropdownTool(
             int tool_id,
-            const wxBitmap& bitmap,
+            const wxBitmapBundle& bitmap,
             const wxString& help_string)
 {
-    return AddTool(tool_id, bitmap, wxNullBitmap, help_string,
+    return AddTool(tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_DROPDOWN, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::AddHybridTool(
             int tool_id,
-            const wxBitmap& bitmap,
+            const wxBitmapBundle& bitmap,
             const wxString& help_string)
 {
-    return AddTool(tool_id, bitmap, wxNullBitmap, help_string,
+    return AddTool(tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_HYBRID, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::AddToggleTool(
         int tool_id,
-        const wxBitmap& bitmap,
+        const wxBitmapBundle& bitmap,
         const wxString& help_string)
 {
-    return AddTool(tool_id, bitmap, wxNullBitmap, help_string,
+    return AddTool(tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_TOGGLE, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::AddTool(
             int tool_id,
-            const wxBitmap& bitmap,
-            const wxBitmap& bitmap_disabled,
+            const wxBitmapBundle& bitmap,
+            const wxBitmapBundle& bitmap_disabled,
             const wxString& help_string,
             wxRibbonButtonKind kind,
             wxObject* client_data)
@@ -192,49 +194,49 @@ wxRibbonToolBarToolBase* wxRibbonToolBar::AddSeparator()
 wxRibbonToolBarToolBase* wxRibbonToolBar::InsertTool(
                 size_t pos,
                 int tool_id,
-                const wxBitmap& bitmap,
+                const wxBitmapBundle& bitmap,
                 const wxString& help_string,
                 wxRibbonButtonKind kind)
 {
-    return InsertTool(pos, tool_id, bitmap, wxNullBitmap, help_string, kind,
+    return InsertTool(pos, tool_id, bitmap, wxBitmapBundle(), help_string, kind,
         nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::InsertDropdownTool(
             size_t pos,
             int tool_id,
-            const wxBitmap& bitmap,
+            const wxBitmapBundle& bitmap,
             const wxString& help_string)
 {
-    return InsertTool(pos, tool_id, bitmap, wxNullBitmap, help_string,
+    return InsertTool(pos, tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_DROPDOWN, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::InsertHybridTool(
             size_t pos,
             int tool_id,
-            const wxBitmap& bitmap,
+            const wxBitmapBundle& bitmap,
             const wxString& help_string)
 {
-    return InsertTool(pos, tool_id, bitmap, wxNullBitmap, help_string,
+    return InsertTool(pos, tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_HYBRID, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::InsertToggleTool(
         size_t pos,
         int tool_id,
-        const wxBitmap& bitmap,
+        const wxBitmapBundle& bitmap,
         const wxString& help_string)
 {
-    return InsertTool(pos, tool_id, bitmap, wxNullBitmap, help_string,
+    return InsertTool(pos, tool_id, bitmap, wxBitmapBundle(), help_string,
         wxRIBBON_BUTTON_TOGGLE, nullptr);
 }
 
 wxRibbonToolBarToolBase* wxRibbonToolBar::InsertTool(
             size_t pos,
             int tool_id,
-            const wxBitmap& bitmap,
-            const wxBitmap& bitmap_disabled,
+            const wxBitmapBundle& bitmap,
+            const wxBitmapBundle& bitmap_disabled,
             const wxString& help_string,
             wxRibbonButtonKind kind,
             wxObject* client_data)
@@ -247,11 +249,14 @@ wxRibbonToolBarToolBase* wxRibbonToolBar::InsertTool(
     tool->bitmap = bitmap;
     if(bitmap_disabled.IsOk())
     {
-        wxASSERT(bitmap.GetLogicalSize() == bitmap_disabled.GetLogicalSize());
+        wxASSERT(bitmap.GetDefaultSize() == bitmap_disabled.GetDefaultSize());
         tool->bitmap_disabled = bitmap_disabled;
     }
     else
-        tool->bitmap_disabled = MakeDisabledBitmap(bitmap);
+    {
+        // Generate disabled bitmap from normal bitmap
+        tool->bitmap_disabled = bitmap.MakeDisabled();
+    }
     tool->help_string = help_string;
     tool->kind = kind;
     tool->client_data = client_data;
@@ -332,6 +337,14 @@ void wxRibbonToolBar::ClearTools()
         delete group;
     }
     m_groups.Clear();
+
+    m_hover_tool = nullptr;
+    m_active_tool = nullptr;
+    m_keyTips.clear();
+    m_dropdownKeyTips.clear();
+
+    // at least one group should be available
+    AppendGroup();
 }
 
 bool wxRibbonToolBar::DeleteTool(int tool_id)
@@ -348,12 +361,81 @@ bool wxRibbonToolBar::DeleteTool(int tool_id)
             if(tool->id == tool_id)
             {
                 group->tools.RemoveAt(t);
+                if ( tool == m_hover_tool )
+                    m_hover_tool = nullptr;
+                if ( tool == m_active_tool )
+                    m_active_tool = nullptr;
                 delete tool;
+                m_keyTips.erase(tool_id);
+                m_dropdownKeyTips.erase(tool_id);
                 return true;
             }
         }
     }
     return false;
+}
+
+void wxRibbonToolBar::SetKeyTip(wxWindowID tool_id, const wxString& keytip)
+{
+    if ( keytip.empty() )
+        m_keyTips.erase(tool_id);
+    else
+        m_keyTips[tool_id] = keytip.Upper();
+}
+
+wxString wxRibbonToolBar::GetKeyTip(wxWindowID tool_id) const
+{
+    auto it = m_keyTips.find(tool_id);
+    return it == m_keyTips.end() ? wxString() : it->second;
+}
+
+void wxRibbonToolBar::SetDropdownKeyTip(wxWindowID tool_id, const wxString& keytip)
+{
+    if ( keytip.empty() )
+        m_dropdownKeyTips.erase(tool_id);
+    else
+        m_dropdownKeyTips[tool_id] = keytip.Upper();
+}
+
+wxString wxRibbonToolBar::GetDropdownKeyTip(wxWindowID tool_id) const
+{
+    auto it = m_dropdownKeyTips.find(tool_id);
+    return it == m_dropdownKeyTips.end() ? wxString() : it->second;
+}
+
+void wxRibbonToolBar::ActivateTool(wxRibbonToolBarToolBase* tool, bool dropdown)
+{
+    wxCHECK_RET(tool, wxT("invalid tool"));
+    if ( tool->state & wxRIBBON_TOOLBAR_TOOL_DISABLED )
+        return;
+
+    wxEventType evt_type = (dropdown || tool->kind == wxRIBBON_BUTTON_DROPDOWN)
+        ? wxEVT_RIBBONTOOLBAR_DROPDOWN_CLICKED
+        : wxEVT_RIBBONTOOLBAR_CLICKED;
+
+    wxRibbonToolBarEvent notification(evt_type, tool->id);
+    if ( !dropdown && tool->kind == wxRIBBON_BUTTON_TOGGLE )
+    {
+        tool->state ^= wxRIBBON_TOOLBAR_TOOL_TOGGLED;
+        notification.SetInt(tool->state & wxRIBBON_TOOLBAR_TOOL_TOGGLED);
+    }
+    notification.SetEventObject(this);
+    notification.SetBar(this);
+
+    // PopupMenu() positions the menu relative to m_active_tool, so set
+    // it here too, otherwise a keytip-opened menu appears at the cursor.
+    const int old_active_id = m_active_tool ? m_active_tool->id : wxID_ANY;
+    m_active_tool = tool;
+    ProcessEvent(notification);
+    m_active_tool = nullptr;
+    if ( old_active_id != wxID_ANY )
+        m_active_tool = FindById(old_active_id);
+
+    wxRibbonPanel* panel = wxDynamicCast(GetParent(), wxRibbonPanel);
+    if ( panel != nullptr )
+        panel->HideIfExpanded();
+
+    Refresh(false);
 }
 
 bool wxRibbonToolBar::DeleteToolByPos(size_t pos)
@@ -369,6 +451,12 @@ bool wxRibbonToolBar::DeleteToolByPos(size_t pos)
             // Remove tool
             wxRibbonToolBarToolBase* tool = group->tools.Item(pos);
             group->tools.RemoveAt(pos);
+            if (tool == m_hover_tool )
+                m_hover_tool = nullptr;
+            if ( tool == m_active_tool )
+                m_active_tool = nullptr;
+            m_keyTips.erase(tool->id);
+            m_dropdownKeyTips.erase(tool->id);
             delete tool;
             return true;
         }
@@ -549,6 +637,32 @@ wxRect wxRibbonToolBar::GetToolRect(int tool_id)const
     return wxRect();
 }
 
+wxRect wxRibbonToolBar::GetToolDropdownRect(int tool_id)const
+{
+    size_t group_count = m_groups.GetCount();
+    size_t g, t;
+
+    for ( g = 0; g < group_count; ++g )
+    {
+        wxRibbonToolBarToolGroup* group = m_groups.Item(g);
+        size_t tool_count = group->tools.GetCount();
+        for ( t = 0; t < tool_count; ++t )
+        {
+            wxRibbonToolBarToolBase* tool = group->tools.Item(t);
+            if ( tool->id == tool_id )
+            {
+                if ( tool->dropdown.IsEmpty() )
+                    return wxRect();
+
+                wxRect dropdown_rect = tool->dropdown;
+                dropdown_rect.Offset(group->position + tool->position);
+                return dropdown_rect;
+            }
+        }
+    }
+    return wxRect();
+}
+
 bool wxRibbonToolBar::GetToolState(int tool_id)const
 {
     wxRibbonToolBarToolBase* tool = FindById(tool_id);
@@ -558,8 +672,9 @@ bool wxRibbonToolBar::GetToolState(int tool_id)const
 
 wxBitmap wxRibbonToolBar::MakeDisabledBitmap(const wxBitmap& original)
 {
-    wxImage img(original.ConvertToImage());
-    return wxBitmap(img.ConvertToGreyscale(), -1, original.GetScaleFactor());
+    wxBitmap bmp = original;
+    wxBitmap::MakeDisabled(bmp);
+    return bmp;
 }
 
 void wxRibbonToolBar::AppendGroup()
@@ -580,7 +695,7 @@ void wxRibbonToolBar::SetToolClientData(int tool_id, wxObject* clientData)
     tool->client_data = clientData;
 }
 
-void wxRibbonToolBar::SetToolDisabledBitmap(int tool_id, const wxBitmap &bitmap)
+void wxRibbonToolBar::SetToolDisabledBitmap(int tool_id, const wxBitmapBundle &bitmap)
 {
     wxRibbonToolBarToolBase* tool = FindById(tool_id);
     wxCHECK_RET(tool != nullptr , "Invalid tool id");
@@ -594,7 +709,7 @@ void wxRibbonToolBar::SetToolHelpString(int tool_id, const wxString& helpString)
     tool->help_string = helpString;
 }
 
-void wxRibbonToolBar::SetToolNormalBitmap(int tool_id, const wxBitmap &bitmap)
+void wxRibbonToolBar::SetToolNormalBitmap(int tool_id, const wxBitmapBundle &bitmap)
 {
     wxRibbonToolBarToolBase* tool = FindById(tool_id);
     wxCHECK_RET(tool != nullptr , "Invalid tool id");
@@ -784,8 +899,10 @@ bool wxRibbonToolBar::Realize()
         {
             wxRibbonToolBarToolBase* tool = group->tools.Item(t);
             tool->size = m_art->GetToolSize(temp_dc, this,
-                tool->bitmap.GetLogicalSize(), tool->kind, t == 0,
+                tool->bitmap.GetPreferredLogicalSizeFor(this), tool->kind, t == 0,
                 t == (tool_count - 1), &tool->dropdown);
+            // reset first and last state
+            tool->state &= ~wxRIBBON_TOOLBAR_TOOL_POSITION_MASK;
             if(t == 0)
                 tool->state |= wxRIBBON_TOOLBAR_TOOL_FIRST;
             if(t == tool_count - 1)
@@ -975,6 +1092,19 @@ void wxRibbonToolBar::OnSize(wxSizeEvent& evt)
     delete[] row_sizes;
 }
 
+void wxRibbonToolBar::OnDPIChanged(wxDPIChangedEvent& event)
+{
+    Realize();
+    event.Skip();
+}
+
+void wxRibbonToolBar::OnSysColourChanged(wxSysColourChangedEvent& event)
+{
+    event.Skip();
+    if ( m_art )
+        m_art->UpdateColoursFromSystem();
+}
+
 // Finds the best width and height given the parents' width and height
 wxSize wxRibbonToolBar::GetBestSizeForParentSize(const wxSize& parentSize) const
 {
@@ -1038,15 +1168,20 @@ void wxRibbonToolBar::OnPaint(wxPaintEvent& WXUNUSED(evt))
             {
                 wxRibbonToolBarToolBase* tool = group->tools.Item(t);
                 wxRect rect(group->position + tool->position, tool->size);
+                // Resolve bitmap bundle to actual bitmap for current DPI
+                wxBitmap bmp;
                 if(tool->state & wxRIBBON_TOOLBAR_TOOL_DISABLED)
-                    m_art->DrawTool(dc, this, rect, tool->bitmap_disabled,
-                        tool->kind, tool->state);
+                    bmp = tool->bitmap_disabled.GetBitmapFor(this);
                 else
-                    m_art->DrawTool(dc, this, rect, tool->bitmap, tool->kind,
-                        tool->state);
+                    bmp = tool->bitmap.GetBitmapFor(this);
+                m_art->DrawTool(dc, this, rect, bmp, tool->kind, tool->state);
             }
         }
     }
+
+    wxRibbonBar* bar = GetAncestorRibbonBar();
+    if ( bar != nullptr )
+        bar->DrawKeyTipsFor(dc, this, m_art);
 }
 
 void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
@@ -1092,12 +1227,7 @@ void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
     }
 #endif
 
-    if(new_hover && new_hover->state & wxRIBBON_TOOLBAR_TOOL_DISABLED)
-    {
-        m_hover_tool = new_hover;
-        new_hover = nullptr; // A disabled tool can not be hilighted
-    }
-    else if(new_hover != m_hover_tool)
+    if(new_hover != m_hover_tool)
     {
         if(m_hover_tool)
         {
@@ -1105,6 +1235,10 @@ void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
                 | wxRIBBON_TOOLBAR_TOOL_ACTIVE_MASK);
         }
         m_hover_tool = new_hover;
+
+        if(new_hover && new_hover->state & wxRIBBON_TOOLBAR_TOOL_DISABLED)
+            new_hover = nullptr; // A disabled tool can not be highlighted
+
         if(new_hover)
         {
             long what = wxRIBBON_TOOLBAR_TOOL_NORMAL_HOVERED;
@@ -1143,6 +1277,8 @@ void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
 
 void wxRibbonToolBar::OnMouseDown(wxMouseEvent& evt)
 {
+    DismissKeyTips();
+
     OnMouseMove(evt);
     if(m_hover_tool)
     {
@@ -1170,22 +1306,8 @@ void wxRibbonToolBar::OnMouseUp(wxMouseEvent& WXUNUSED(evt))
     {
         if(m_active_tool->state & wxRIBBON_TOOLBAR_TOOL_ACTIVE_MASK)
         {
-            wxEventType evt_type = wxEVT_RIBBONTOOLBAR_CLICKED;
-            if(m_active_tool->state & wxRIBBON_TOOLBAR_TOOL_DROPDOWN_ACTIVE)
-                evt_type = wxEVT_RIBBONTOOLBAR_DROPDOWN_CLICKED;
-            wxRibbonToolBarEvent notification(evt_type, m_active_tool->id);
-            if(m_active_tool->kind == wxRIBBON_BUTTON_TOGGLE)
-            {
-                m_active_tool->state ^=
-                    wxRIBBON_BUTTONBAR_BUTTON_TOGGLED;
-                notification.SetInt(m_active_tool->state &
-                    wxRIBBON_BUTTONBAR_BUTTON_TOGGLED);
-            }
-            notification.SetEventObject(this);
-            notification.SetBar(this);
-            ProcessEvent(notification);
-
-            wxStaticCast(m_parent, wxRibbonPanel)->HideIfExpanded();
+            ActivateTool(m_active_tool,
+                (m_active_tool->state & wxRIBBON_TOOLBAR_TOOL_DROPDOWN_ACTIVE) != 0);
         }
 
         // Notice that m_active_tool could have been reset by the event handler
@@ -1203,6 +1325,7 @@ void wxRibbonToolBar::OnMouseEnter(wxMouseEvent& evt)
 {
     if(m_active_tool && !evt.LeftIsDown())
     {
+        m_active_tool->state &= ~wxRIBBON_TOOLBAR_TOOL_ACTIVE_MASK;
         m_active_tool = nullptr;
     }
 }

@@ -14,6 +14,7 @@
 
 #include "wx/mediactrl.h"
 
+wxGCC_WARNING_SUPPRESS(cast-qual)
 #include <gst/gst.h>                // main gstreamer header
 
 #if GST_CHECK_VERSION(1,0,0)
@@ -21,6 +22,7 @@
 #else
 #include <gst/interfaces/xoverlay.h>
 #endif
+wxGCC_WARNING_RESTORE(cast-qual)
 
 #ifndef  WX_PRECOMP
     #include "wx/log.h"             // wxLogDebug/wxLogSysError/wxLogTrace
@@ -497,7 +499,7 @@ static GstBusSyncReply gst_bus_sync_callback(GstBus* bus,
 // wxGStreamerMediaBackend::HandleStateChange
 //
 // Handles a state change event from our C Callback for "state-change" or
-// the async queue in 0.10. (Mostly this is here to avoid locking the
+// the async queue in 0.10. (Mostly this is here to avoid locking
 // the mutex twice...)
 //-----------------------------------------------------------------------------
 void wxGStreamerMediaBackend::HandleStateChange(GstState oldstate,

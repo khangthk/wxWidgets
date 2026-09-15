@@ -71,9 +71,6 @@ public:
     virtual void SetTitle( const wxString &title ) override;
     virtual wxString GetTitle() const override { return m_title; }
 
-    virtual void SetLabel(const wxString& label) override { SetTitle( label ); }
-    virtual wxString GetLabel() const override            { return GetTitle(); }
-
     virtual wxVisualAttributes GetDefaultAttributes() const override;
 
     virtual bool SetTransparent(wxByte alpha) override;
@@ -89,11 +86,29 @@ public:
     virtual void Refresh( bool eraseBackground = true,
                           const wxRect *rect = (const wxRect *) nullptr ) override;
 
+    // GTK-specific accessor returning true if Wayland XDG session management
+    // protocol is available.
+    //
+    // Returns false when not using Wayland at all.
+    static bool HasWaylandXDGSessionManagement();
+
+    // Set the XDG session ID to use: calling this even with an empty string
+    // registers this window as part of XDG toplevel session, meaning that its
+    // geometry will be saved/restored by the compositor.
+    bool SetWaylandXDGSessionId(const wxString& sessionId);
+
+    // Return the XDG session used by this object, if any.
+    wxString GetWaylandXDGSessionId() const;
+
+
     // implementation from now on
     // --------------------------
 
     // GTK callbacks
     virtual void GTKHandleRealized() override;
+    virtual void GTKHandleUnrealized() override;
+
+    void GTKHandleMapped();
 
     void GTKConfigureEvent(int x, int y);
 
@@ -113,15 +128,10 @@ public:
     // size of WM decorations
     struct DecorSize
     {
-        DecorSize()
-        {
-            left =
-            right =
-            top =
+        int left = 0,
+            right = 0,
+            top = 0,
             bottom = 0;
-        }
-
-        int left, right, top, bottom;
     };
     DecorSize m_decorSize;
 
@@ -131,12 +141,13 @@ public:
     // timer for detecting WM with broken _NET_REQUEST_FRAME_EXTENTS handling
     unsigned m_netFrameExtentsTimerId;
 
-    // return the size of the window without WM decorations
-    void GTKDoGetSize(int *width, int *height) const;
-
     void GTKUpdateDecorSize(const DecorSize& decorSize);
 
     void GTKDoAfterShow();
+
+#ifdef wxHAVE_WAYLAND_SESSION_MANAGEMENT
+    class wxXDGSessionData *m_xdgSessionData = nullptr;
+#endif // wxHAVE_WAYLAND_SESSION_MANAGEMENT
 
 #ifdef __WXGTK3__
     void GTKUpdateClientSizeIfNecessary();
@@ -175,6 +186,11 @@ protected:
 private:
     void Init();
     DecorSize& GetCachedDecorSize();
+
+    // return the size of the window without WM (i.e. SSD, as opposed to CSD)
+    // decorations but only take them into account for resizeable windows
+    wxSize GTKDoGetSize(bool isResizeable) const;
+
 
     // size hint increments
     int m_incWidth, m_incHeight;

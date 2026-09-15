@@ -28,6 +28,7 @@
 #include <memory>
 
 // These are all Scintilla headers
+wxGCC_WARNING_SUPPRESS(double-promotion)
 #define INCLUDE_DEPRECATED_FEATURES
 #include "Platform.h"
 
@@ -64,6 +65,7 @@
 
 #include "AutoComplete.h"
 #include "ScintillaBase.h"
+wxGCC_WARNING_RESTORE(double-promotion)
 
 #include "wx/dnd.h"
 #include "wx/event.h"
@@ -193,8 +195,6 @@ public:
     void DoScrollToLine(int line);
     void DoScrollToColumn(int column);
     void ClipChildren(wxDC& dc, PRectangle rect);
-    void SetUseAntiAliasing(bool useAA);
-    bool GetUseAntiAliasing();
     SurfaceData* GetSurfaceData() const {return m_surfaceData;}
     void SetPaintAbandoned(){paintState = paintAbandoned;}
     void DoMarkerDefineBitmap(int markerNumber, const wxBitmap& bmp);

@@ -32,6 +32,8 @@
 #include "wx/msw/private/webview_edge.h"
 #include "wx/msw/private/comstream.h"
 
+#include <algorithm>
+
 #ifdef __VISUALC__
 #include <wrl/event.h>
 using namespace Microsoft::WRL;
@@ -99,7 +101,7 @@ public:
     {
         wxURI rawURI(GetRawURI());
         wxString path = rawURI.GetPath();
-        if (!path.empty()) // Remove / in front
+        if (!path.empty() && path[0] == '/') // Remove '/' in front if present
             path.erase(0, 1);
         wxString uri = wxString::Format("%s:%s", m_handler->GetName(), path);
         return uri;
@@ -216,11 +218,14 @@ public:
             return false;
         }
         // Mark event as completed
-        hr = m_deferral->Complete();
-        if (FAILED(hr))
+        if ( m_deferral )
         {
-            wxLogApiError("deferral->Complete()", hr);
-            return false;
+            hr = m_deferral->Complete();
+            if (FAILED(hr))
+            {
+                wxLogApiError("deferral->Complete()", hr);
+                return false;
+            }
         }
 
         return true;
@@ -264,11 +269,17 @@ public:
         m_dataPath = wxStandardPaths::Get().GetUserLocalDataDir();
 #ifdef __VISUALC__
         m_webViewEnvironmentOptions = Make<CoreWebView2EnvironmentOptions>().Get();
+#if wxUSE_INTL
         m_webViewEnvironmentOptions->put_Language(wxUILocale::GetCurrent().GetLocaleId().GetName().wc_str());
+#endif
 
         wxCOMPtr<ICoreWebView2EnvironmentOptions3> options3;
         if (SUCCEEDED(m_webViewEnvironmentOptions->QueryInterface(IID_PPV_ARGS(&options3))))
-            options3->put_IsCustomCrashReportingEnabled(false);
+        {
+            // Contrary to what could be expected, Windows doesn't send crash
+            // report to Microsoft when this setting is set to true, not false!
+            options3->put_IsCustomCrashReportingEnabled(true);
+        }
 #endif
     }
 
@@ -307,12 +318,19 @@ public:
         if (!m_webViewEnvironment)
         {
             m_webViewsWaitingForEnvironment.push_back(impl);
+
+            // keep us alive until the completion handler below runs, see #26491
+            wxWebViewConfiguration keepAlive = impl->m_config;
             HRESULT hr = wxCreateCoreWebView2EnvironmentWithOptions(
                 ms_browserExecutableDir.wc_str(),
                 GetDataPath().wc_str(),
                 m_webViewEnvironmentOptions,
-                Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(this,
-                    &wxWebViewConfigurationImplEdge::OnEnvironmentCreated).Get());
+                Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+                    [this, keepAlive]
+                    (HRESULT result, ICoreWebView2Environment* env) -> HRESULT
+                    {
+                        return OnEnvironmentCreated(result, env);
+                    }).Get());
             if (FAILED(hr))
             {
                 wxLogApiError("CreateWebView2EnvironmentWithOptions", hr);
@@ -328,11 +346,31 @@ public:
         }
     }
 
+    // Called from wxWebViewEdgeImpl dtor to ensure that we don't try to use a
+    // WebView which had been destroyed while waiting for the environment
+    // creation to complete, see #26491.
+    void RemoveWaitingForEnvironment(wxWebViewEdgeImpl* impl)
+    {
+        m_webViewsWaitingForEnvironment.erase(
+            std::remove(
+                m_webViewsWaitingForEnvironment.begin(),
+                m_webViewsWaitingForEnvironment.end(),
+                impl
+            ),
+            m_webViewsWaitingForEnvironment.end()
+        );
+    }
+
     HRESULT OnEnvironmentCreated(HRESULT WXUNUSED(result), ICoreWebView2Environment* environment)
     {
         m_webViewEnvironment = environment;
+
+        // Note that EnvironmentAvailable() doesn't run any user code and so
+        // can't destroy any of the WebViews here, i.e. it can't modify the
+        // vector we're iterating over.
         for (auto impl : m_webViewsWaitingForEnvironment)
             impl->EnvironmentAvailable(m_webViewEnvironment);
+
         m_webViewsWaitingForEnvironment.clear();
         return S_OK;
     }
@@ -363,7 +401,8 @@ public:
     {
         wxPoint result(-1, -1);
         BOOL hasPosition;
-        if (SUCCEEDED(m_windowFeatures->get_HasPosition(&hasPosition)) && hasPosition)
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_HasPosition(&hasPosition)) && hasPosition)
         {
             UINT32 x, y;
             if (SUCCEEDED(m_windowFeatures->get_Left(&x)) &&
@@ -377,7 +416,8 @@ public:
     {
         wxSize result(-1, -1);
         BOOL hasSize;
-        if (SUCCEEDED(m_windowFeatures->get_HasSize(&hasSize)) && hasSize)
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_HasSize(&hasSize)) && hasSize)
         {
             UINT32 width, height;
             if (SUCCEEDED(m_windowFeatures->get_Width(&width)) &&
@@ -390,7 +430,8 @@ public:
     virtual bool ShouldDisplayMenuBar() const override
     {
         BOOL result;
-        if (SUCCEEDED(m_windowFeatures->get_ShouldDisplayMenuBar(&result)))
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_ShouldDisplayMenuBar(&result)))
             return result;
         else
             return true;
@@ -399,7 +440,8 @@ public:
     virtual bool ShouldDisplayStatusBar() const override
     {
         BOOL result;
-        if (SUCCEEDED(m_windowFeatures->get_ShouldDisplayStatus(&result)))
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_ShouldDisplayStatus(&result)))
             return result;
         else
             return true;
@@ -407,7 +449,8 @@ public:
     virtual bool ShouldDisplayToolBar() const override
     {
         BOOL result;
-        if (SUCCEEDED(m_windowFeatures->get_ShouldDisplayToolbar(&result)))
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_ShouldDisplayToolbar(&result)))
             return result;
         else
             return true;
@@ -416,7 +459,8 @@ public:
     virtual bool ShouldDisplayScrollBars() const override
     {
         BOOL result;
-        if (SUCCEEDED(m_windowFeatures->get_ShouldDisplayScrollBars(&result)))
+        if (m_windowFeatures &&
+            SUCCEEDED(m_windowFeatures->get_ShouldDisplayScrollBars(&result)))
             return result;
         else
             return true;
@@ -445,6 +489,15 @@ wxWebViewEdgeImpl::wxWebViewEdgeImpl(wxWebViewEdge* webview) :
 
 wxWebViewEdgeImpl::~wxWebViewEdgeImpl()
 {
+    *m_alive = false;
+
+    // If we're still waiting for the environment creation to complete, we must
+    // not be notified about it any more.
+    auto* const config =
+        static_cast<wxWebViewConfigurationImplEdge*>(m_config.GetImpl());
+    if (config)
+        config->RemoveWaitingForEnvironment(this);
+
     if (m_webView)
     {
         m_webView->remove_NavigationCompleted(m_navigationCompletedToken);
@@ -467,6 +520,7 @@ bool wxWebViewEdgeImpl::Create()
     m_isBusy = false;
     m_inEventCallback = false;
     m_pendingContextMenuEnabled = -1;
+    // 0 to turn off dev tools by default
     m_pendingAccessToDevToolsEnabled = 0;
     m_pendingEnableBrowserAcceleratorKeys = -1;
 
@@ -482,6 +536,18 @@ void wxWebViewEdgeImpl::EnvironmentAvailable(ICoreWebView2Environment* environme
 {
     environment->QueryInterface(IID_PPV_ARGS(&m_webViewEnvironment));
     wxCOMPtr<ICoreWebView2Environment10> environment10;
+
+    // guard against completing after we're destroyed, see #26491
+    std::shared_ptr<bool> alive = m_alive;
+    auto onWebViewCreated =
+        [this, alive]
+        (HRESULT result, ICoreWebView2Controller* controller) -> HRESULT
+        {
+            if (!*alive)
+                return S_OK;
+            return OnWebViewCreated(result, controller);
+        };
+
     if (SUCCEEDED(m_webViewEnvironment->QueryInterface(IID_PPV_ARGS(&environment10))))
     {
         wxCOMPtr<ICoreWebView2ControllerOptions> controllerOptions;
@@ -494,14 +560,14 @@ void wxWebViewEdgeImpl::EnvironmentAvailable(ICoreWebView2Environment* environme
                 m_ctrl->GetHWND(),
                 controllerOptions.get(),
                 Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                    this, &wxWebViewEdgeImpl::OnWebViewCreated).Get());
+                    onWebViewCreated).Get());
         }
     }
     else
         m_webViewEnvironment->CreateCoreWebView2Controller(
             m_ctrl->GetHWND(),
             Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                this, &wxWebViewEdgeImpl::OnWebViewCreated).Get());
+                onWebViewCreated).Get());
 }
 
 bool wxWebViewEdgeImpl::Initialize()
@@ -548,7 +614,7 @@ void wxWebViewEdgeImpl::UpdateBounds()
 {
     RECT r;
     wxCopyRectToRECT(m_ctrl->GetClientRect(), r);
-    if (m_webView)
+    if ( m_webViewController )
         m_webViewController->put_Bounds(r);
 }
 
@@ -570,6 +636,21 @@ HRESULT wxWebViewEdgeImpl::HandleNavigationStarting(ICoreWebView2NavigationStart
     wxCoTaskMemPtr<wchar_t> uri;
     if (SUCCEEDED(args->get_Uri(&uri)))
         evtURL = wxString(uri);
+
+    // Check if this is a custom scheme URL that needs translation
+    // (e.g., memory:page2.htm -> https://memory.wxsite/page2.htm)
+    for (const auto& kv : m_handlers)
+    {
+        const wxString scheme = kv.second->GetName() + ":";
+        if (evtURL.StartsWith(scheme))
+        {
+            // Cancel this navigation and redirect through LoadURL
+            // which will translate the custom scheme URL
+            args->put_Cancel(true);
+            m_ctrl->LoadURL(evtURL);
+            return S_OK;
+        }
+    }
 
     wxWebViewEvent event(wxEVT_WEBVIEW_NAVIGATING, m_ctrl->GetId(), evtURL, wxString());
     event.SetEventObject(m_ctrl);
@@ -668,7 +749,7 @@ HRESULT wxWebViewEdgeImpl::OnNavigationCompleted(ICoreWebView2* WXUNUSED(sender)
         {
             // If we are not at the end of the list, then erase everything
             // between us and the end before adding the new page
-            if (m_historyPosition != static_cast<int>(m_historyList.size()) - 1)
+            if (m_historyPosition != wxSsize(m_historyList) - 1)
             {
                 m_historyList.erase(m_historyList.begin() + m_historyPosition + 1,
                     m_historyList.end());
@@ -800,13 +881,34 @@ HRESULT wxWebViewEdgeImpl::OnWebResourceRequested(ICoreWebView2* WXUNUSED(sender
         return hr;
     wxWebViewEdgeHandlerRequest request(apiRequest);
 
-    // Find handler
+    // Find handler by server (e.g., https://memory.wxsite/page1.htm)
+    // or by scheme (e.g., memory:logo.png)
     wxURI uri(request.GetRawURI());
-    if (!uri.HasServer())
-        return E_INVALIDARG;
-    wxSharedPtr<wxWebViewHandler> handler = m_handlers[uri.GetServer()];
+    wxSharedPtr<wxWebViewHandler> handler;
+
+    if (uri.HasServer())
+    {
+        const auto it = m_handlers.find(uri.GetServer());
+        if ( it != m_handlers.end() )
+            handler = it->second;
+    }
+
+    if (!handler)
+    {
+        wxString scheme = uri.GetScheme();
+        for (const auto& kv : m_handlers)
+        {
+            if (kv.second->GetName() == scheme)
+            {
+                handler = kv.second;
+                break;
+            }
+        }
+    }
+
     if (!handler)
         return E_INVALIDARG;
+
     request.SetHandler(handler.get());
 
     // Create response
@@ -851,6 +953,14 @@ HRESULT wxWebViewEdgeImpl::OnWebViewCreated(HRESULT result, ICoreWebView2Control
     UpdateBounds();
     m_webViewController->put_IsVisible(true);
     m_ctrl->NotifyWebViewCreated();
+
+    // If focus moved to the WebView window before the Edge instance was fully
+    // created, we couldn't call m_webViewController->MoveFocus at that time. If focus is
+    // there now, call MoveFocus to ensure that focus is inside of the web
+    // content window. This helps screen readers, since they  use the focus
+    // window to influence their behavior.
+    if (m_ctrl && m_ctrl->HasFocus())
+        m_webViewController->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 
     // Connect and handle the various WebView events
     m_webView->add_NavigationStarting(
@@ -901,8 +1011,14 @@ HRESULT wxWebViewEdgeImpl::OnWebViewCreated(HRESULT result, ICoreWebView2Control
     // Register handlers
     for (const auto& kv : m_handlers)
     {
+        // Register filter for virtual host URLs (e.g., *://memory.wxsite/*)
         wxString filterURI = wxString::Format("*://%s/*", kv.first);
-        m_webView->AddWebResourceRequestedFilter(filterURI.wc_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        AddWebResourceRequestedFilter(filterURI);
+
+        // Also register filter for scheme URLs (e.g., memory:*)
+        // This is needed for resources referenced in HTML like <img src='memory:logo.png'>
+        wxString schemeFilter = kv.second->GetName() + ":*";
+        AddWebResourceRequestedFilter(schemeFilter);
     }
 
     if (m_pendingContextMenuEnabled != -1)
@@ -914,7 +1030,7 @@ HRESULT wxWebViewEdgeImpl::OnWebViewCreated(HRESULT result, ICoreWebView2Control
     if (m_pendingAccessToDevToolsEnabled != -1)
     {
         m_ctrl->EnableAccessToDevTools(m_pendingAccessToDevToolsEnabled == 1);
-        m_pendingContextMenuEnabled = -1;
+        m_pendingAccessToDevToolsEnabled = -1;
     }
 
     if (m_pendingEnableBrowserAcceleratorKeys != -1)
@@ -952,7 +1068,7 @@ HRESULT wxWebViewEdgeImpl::OnWebViewCreated(HRESULT result, ICoreWebView2Control
     {
         if (FAILED(m_newWindowArgs->put_NewWindow(baseWebView)))
             SendErrorEventForAPI("WebView2::WebViewCreated (put_NewWindow)", hr);
-        if (FAILED(m_newWindowDeferral->Complete()))
+        if (m_newWindowDeferral && FAILED(m_newWindowDeferral->Complete()))
             SendErrorEventForAPI("WebView2::WebViewCreated (Complete)", hr);
         m_newWindowArgs.reset();
         m_newWindowDeferral.reset();
@@ -990,6 +1106,30 @@ void wxWebViewEdgeImpl::UpdateWebMessageHandler()
             m_scriptMsgHandlerName);
         m_ctrl->AddUserScript(js);
         m_webView->ExecuteScript(js.wc_str(), nullptr);
+    }
+}
+
+void wxWebViewEdgeImpl::AddWebResourceRequestedFilter(const wxString& filterURI)
+{
+    // Try to use the newer API that properly handles iframes if available,
+    // fall back to the deprecated method otherwise.
+    wxCOMPtr<ICoreWebView2_22> webView22;
+    if (SUCCEEDED(m_webView->QueryInterface(IID_PPV_ARGS(&webView22))))
+    {
+        HRESULT hr = webView22->AddWebResourceRequestedFilterWithRequestSourceKinds(
+            filterURI.wc_str(),
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+            COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL);
+        if (FAILED(hr))
+            wxLogApiError("AddWebResourceRequestedFilterWithRequestSourceKinds", hr);
+    }
+    else
+    {
+        HRESULT hr = m_webView->AddWebResourceRequestedFilter(
+            filterURI.wc_str(),
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        if (FAILED(hr))
+            wxLogApiError("AddWebResourceRequestedFilter", hr);
     }
 }
 
@@ -1051,9 +1191,12 @@ wxWebViewEdge::wxWebViewEdge(wxWindow* parent,
 
 wxWebViewEdge::~wxWebViewEdge()
 {
+    Unbind(wxEVT_SIZE, &wxWebViewEdge::OnSize, this);
+    Unbind(wxEVT_SET_FOCUS, &wxWebViewEdge::OnSetFocus, this);
     wxWindow* topLevelParent = wxGetTopLevelParent(this);
     if (topLevelParent)
         topLevelParent->Unbind(wxEVT_ICONIZE, &wxWebViewEdge::OnTopLevelParentIconized, this);
+    Unbind(wxEVT_SHOW, &wxWebViewEdge::OnShow, this);
     delete m_impl;
 }
 
@@ -1074,8 +1217,6 @@ bool wxWebViewEdge::Create(wxWindow* parent,
         return false;
     }
 
-    MSWDisableComposited();
-
     if (!m_impl->Create())
         return false;
     Bind(wxEVT_SIZE, &wxWebViewEdge::OnSize, this);
@@ -1083,6 +1224,7 @@ bool wxWebViewEdge::Create(wxWindow* parent,
     wxWindow* topLevelParent = wxGetTopLevelParent(this);
     if (topLevelParent)
         topLevelParent->Bind(wxEVT_ICONIZE, &wxWebViewEdge::OnTopLevelParentIconized, this);
+    Bind(wxEVT_SHOW, &wxWebViewEdge::OnShow, this);
 
     LoadURL(url);
     return true;
@@ -1105,6 +1247,27 @@ void wxWebViewEdge::OnTopLevelParentIconized(wxIconizeEvent& event)
 {
     if (m_impl && m_impl->m_webViewController)
         m_impl->m_webViewController->put_IsVisible(!event.IsIconized());
+    event.Skip();
+}
+
+void wxWebViewEdge::OnShow(wxShowEvent& event)
+{
+    if ( m_impl && m_impl->m_webViewController )
+    {
+        m_impl->m_webViewController->put_IsVisible(event.IsShown());
+        // Force a refresh by refreshing its paint area
+        if ( event.IsShown() )
+        {
+            // put_Bounds is a no-op when the rect is unchanged, so collapse to
+            // zero first to guarantee a bounds change that forces a repaint
+            m_impl->m_webViewController->put_Bounds(RECT{});
+            CallAfter([this]
+            {
+                if ( m_impl && m_impl->m_webViewController )
+                    m_impl->UpdateBounds();
+            });
+        }
+    }
     event.Skip();
 }
 
@@ -1145,7 +1308,7 @@ void wxWebViewEdge::LoadHistoryItem(wxSharedPtr<wxWebViewHistoryItem> item)
         if (m_impl->m_historyList[i].get() == item.get())
             pos = i;
     }
-    wxASSERT_MSG(pos != static_cast<int>(m_impl->m_historyList.size()), "invalid history item");
+    wxASSERT_MSG(pos != wxSsize(m_impl->m_historyList), "invalid history item");
     m_impl->m_historyLoadingFromList = true;
     LoadURL(item->GetUrl());
     m_impl->m_historyPosition = pos;
@@ -1168,7 +1331,7 @@ wxVector<wxSharedPtr<wxWebViewHistoryItem> > wxWebViewEdge::GetForwardHistory()
     wxVector<wxSharedPtr<wxWebViewHistoryItem> > forwardhist;
     //As we don't have std::copy or an iterator constructor in the wxwidgets
     //native vector we construct it by hand
-    for (int i = m_impl->m_historyPosition + 1; i < static_cast<int>(m_impl->m_historyList.size()); i++)
+    for (int i = m_impl->m_historyPosition + 1; i < wxSsize(m_impl->m_historyList); i++)
     {
         forwardhist.push_back(m_impl->m_historyList[i]);
     }
@@ -1178,7 +1341,7 @@ wxVector<wxSharedPtr<wxWebViewHistoryItem> > wxWebViewEdge::GetForwardHistory()
 bool wxWebViewEdge::CanGoForward() const
 {
     if (m_impl->m_historyEnabled)
-        return m_impl->m_historyPosition != static_cast<int>(m_impl->m_historyList.size()) - 1;
+        return m_impl->m_historyPosition != wxSsize(m_impl->m_historyList) - 1;
     else
         return false;
 }
@@ -1269,16 +1432,201 @@ void wxWebViewEdge::Print()
     RunScript("window.print();");
 }
 
+#if wxUSE_PRINTING_ARCHITECTURE
+#include "wx/cmndata.h"
+#include "wx/paper.h"
+
+void wxWebViewEdge::Print(const wxPrintData& printData, int flags)
+{
+    if (!m_impl->m_webView)
+    {
+        wxWebView::Print(printData, flags);
+        return;
+    }
+
+    // Try to use ICoreWebView2_16::Print with ICoreWebView2PrintSettings
+    wxCOMPtr<ICoreWebView2_16> webView16;
+    if (FAILED(m_impl->m_webView->QueryInterface(IID_PPV_ARGS(&webView16))))
+    {
+        // Fallback to default print
+        Print();
+        return;
+    }
+
+    wxCOMPtr<ICoreWebView2Environment6> environment6;
+    if (FAILED(m_impl->m_webViewEnvironment->QueryInterface(IID_PPV_ARGS(&environment6))))
+    {
+        Print();
+        return;
+    }
+
+    wxCOMPtr<ICoreWebView2PrintSettings> printSettings;
+    HRESULT hr = environment6->CreatePrintSettings(&printSettings);
+    if (FAILED(hr))
+    {
+        wxLogApiError("CreatePrintSettings", hr);
+        Print();
+        return;
+    }
+
+    // Set orientation
+    printSettings->put_Orientation(
+        printData.GetOrientation() == wxLANDSCAPE
+            ? COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE
+            : COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT);
+
+    // Set paper size (convert from tenths of mm to inches)
+    wxSize paperSizeTenthsMM = wxThePrintPaperDatabase->GetSize(printData.GetPaperId());
+    if (paperSizeTenthsMM.x > 0 && paperSizeTenthsMM.y > 0)
+    {
+        double widthInches = paperSizeTenthsMM.x / 254.0;
+        double heightInches = paperSizeTenthsMM.y / 254.0;
+        printSettings->put_PageWidth(widthInches);
+        printSettings->put_PageHeight(heightInches);
+    }
+
+    // Set header/footer
+    printSettings->put_ShouldPrintHeaderAndFooter(
+        (flags & wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER) ? FALSE : TRUE);
+
+    // Try ICoreWebView2PrintSettings2 for extended settings
+    wxCOMPtr<ICoreWebView2PrintSettings2> printSettings2;
+    if (SUCCEEDED(printSettings->QueryInterface(IID_PPV_ARGS(&printSettings2))))
+    {
+        // Copies
+        int copies = printData.GetNoCopies();
+        if (copies > 0)
+            printSettings2->put_Copies(copies);
+
+        // Collation
+        if (printData.GetCollate())
+            printSettings2->put_Collation(COREWEBVIEW2_PRINT_COLLATION_COLLATED);
+
+        // Duplex
+        switch (printData.GetDuplex())
+        {
+            case wxDUPLEX_SIMPLEX:
+                printSettings2->put_Duplex(COREWEBVIEW2_PRINT_DUPLEX_ONE_SIDED);
+                break;
+            case wxDUPLEX_HORIZONTAL:
+                printSettings2->put_Duplex(COREWEBVIEW2_PRINT_DUPLEX_TWO_SIDED_SHORT_EDGE);
+                break;
+            case wxDUPLEX_VERTICAL:
+                printSettings2->put_Duplex(COREWEBVIEW2_PRINT_DUPLEX_TWO_SIDED_LONG_EDGE);
+                break;
+        }
+
+        // Color mode
+        if (!printData.GetColour())
+            printSettings2->put_ColorMode(COREWEBVIEW2_PRINT_COLOR_MODE_GRAYSCALE);
+    }
+
+    // Print with settings (no callback needed for now)
+    hr = webView16->Print(printSettings,
+        Callback<ICoreWebView2PrintCompletedHandler>(
+            [](HRESULT errorCode, COREWEBVIEW2_PRINT_STATUS) -> HRESULT
+            {
+                if (FAILED(errorCode))
+                    wxLogApiError("WebView2::Print", errorCode);
+                return S_OK;
+            }).Get());
+
+    if (FAILED(hr))
+        wxLogApiError("ICoreWebView2_16::Print", hr);
+}
+#endif // wxUSE_PRINTING_ARCHITECTURE
+
+bool wxWebViewEdge::DoCallPrintToPdf(const wxString& filePath, ICoreWebView2PrintSettings* printSettings)
+{
+    wxCOMPtr<ICoreWebView2_7> webView7;
+    if (FAILED(m_impl->m_webView->QueryInterface(IID_PPV_ARGS(&webView7))))
+    {
+        wxLogError(_("PDF export requires a newer version of the WebView2 runtime."));
+        return false;
+    }
+
+    const wxString filePathCopy = filePath;
+    HRESULT hr = webView7->PrintToPdf(
+        filePath.wc_str(),
+        printSettings,
+        Callback<ICoreWebView2PrintToPdfCompletedHandler>(
+            [this, filePathCopy](HRESULT errorCode, BOOL isSuccessful) -> HRESULT
+            {
+                wxWebViewEvent* event = new wxWebViewEvent(wxEVT_WEBVIEW_PDF_SAVED, GetId(), filePathCopy, wxString());
+                event->SetInt((SUCCEEDED(errorCode) && isSuccessful) ? 1 : 0);
+                event->SetEventObject(this);
+                QueueEvent(event);
+                return S_OK;
+            }).Get());
+
+    if (FAILED(hr))
+    {
+        wxLogApiError("ICoreWebView2_7::PrintToPdf", hr);
+        return false;
+    }
+    return true;
+}
+
+bool wxWebViewEdge::PrintToPDF(const wxString& filePath)
+{
+    if (!m_impl->m_webView)
+        return false;
+
+    return DoCallPrintToPdf(filePath, nullptr);
+}
+
+#if wxUSE_PRINTING_ARCHITECTURE
+bool wxWebViewEdge::PrintToPDF(const wxString& filePath, const wxPrintData& printData)
+{
+    if (!m_impl->m_webView)
+        return false;
+
+    wxCOMPtr<ICoreWebView2Environment6> environment6;
+    if (FAILED(m_impl->m_webViewEnvironment->QueryInterface(IID_PPV_ARGS(&environment6))))
+        return PrintToPDF(filePath);
+
+    wxCOMPtr<ICoreWebView2PrintSettings> printSettings;
+    HRESULT hr = environment6->CreatePrintSettings(&printSettings);
+    if (FAILED(hr))
+    {
+        wxLogApiError("CreatePrintSettings", hr);
+        return PrintToPDF(filePath);
+    }
+
+    printSettings->put_Orientation(
+        printData.GetOrientation() == wxLANDSCAPE
+            ? COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE
+            : COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT);
+
+    wxSize paperSizeTenthsMM = wxThePrintPaperDatabase->GetSize(printData.GetPaperId());
+    if (paperSizeTenthsMM.x > 0 && paperSizeTenthsMM.y > 0)
+    {
+        double widthInches = paperSizeTenthsMM.x / 254.0;
+        double heightInches = paperSizeTenthsMM.y / 254.0;
+        printSettings->put_PageWidth(widthInches);
+        printSettings->put_PageHeight(heightInches);
+    }
+
+    printSettings->put_ShouldPrintHeaderAndFooter(FALSE);
+
+    return DoCallPrintToPdf(filePath, printSettings);
+}
+#endif // wxUSE_PRINTING_ARCHITECTURE
+
 float wxWebViewEdge::GetZoomFactor() const
 {
-    double old_zoom_factor = 0.0;
-    m_impl->m_webViewController->get_ZoomFactor(&old_zoom_factor);
-    return old_zoom_factor;
+    if ( !m_impl->m_webViewController )
+        return 1.0f;
+
+    double zoomFactor = 1.0;
+    m_impl->m_webViewController->get_ZoomFactor(&zoomFactor);
+    return zoomFactor;
 }
 
 void wxWebViewEdge::SetZoomFactor(float zoom)
 {
-    m_impl->m_webViewController->put_ZoomFactor(zoom);
+    if ( m_impl->m_webViewController )
+        m_impl->m_webViewController->put_ZoomFactor(double(zoom));
 }
 
 bool wxWebViewEdge::CanUndo() const
@@ -1346,6 +1694,9 @@ void wxWebViewEdge::EnableAccessToDevTools(bool enable)
 
 bool wxWebViewEdge::ShowDevTools()
 {
+    if ( !m_impl->m_webView )
+        return false;
+
     const HRESULT hr = m_impl->m_webView->OpenDevToolsWindow();
     if ( FAILED(hr) )
     {
@@ -1431,7 +1782,79 @@ bool wxWebViewEdge::SetProxy(const wxString& proxy)
     return configImpl->SetProxy(proxy);
 }
 
-void* wxWebViewEdge::GetNativeBackend() const
+bool wxWebViewEdge::ClearBrowsingData(int types, wxDateTime since)
+{
+    if ( !m_impl->m_webView )
+        return false;
+
+    wxCOMPtr<ICoreWebView2_13> webView13;
+    if (FAILED(m_impl->m_webView->QueryInterface(IID_PPV_ARGS(&webView13))))
+        return false;
+    wxCOMPtr<ICoreWebView2Profile> profile;
+    if (FAILED(webView13->get_Profile(&profile)))
+        return false;
+    wxCOMPtr<ICoreWebView2Profile2> profile2;
+    if (FAILED(profile->QueryInterface(IID_PPV_ARGS(&profile2))))
+        return false;
+
+    int dataKinds = 0;
+    if (types & wxWEBVIEW_BROWSING_DATA_ALL)
+    {
+        dataKinds = COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_PROFILE;
+    }
+    else
+    {
+        if (types & wxWEBVIEW_BROWSING_DATA_CACHE)
+            dataKinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE;
+
+        // This makes the code a bit more complicated, but prefer to use "ALL
+        // SITE" if we want to delete both cookies and DOM storage because this
+        // will include any other kind of data that may be added in the future.
+        switch ( types & (wxWEBVIEW_BROWSING_DATA_COOKIES |
+                          wxWEBVIEW_BROWSING_DATA_DOM_STORAGE) )
+        {
+            case wxWEBVIEW_BROWSING_DATA_COOKIES:
+                dataKinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES;
+                break;
+
+            case wxWEBVIEW_BROWSING_DATA_DOM_STORAGE:
+                dataKinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE;
+                break;
+
+            case wxWEBVIEW_BROWSING_DATA_COOKIES | wxWEBVIEW_BROWSING_DATA_DOM_STORAGE:
+                dataKinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE;
+                break;
+        }
+
+        if (types & wxWEBVIEW_BROWSING_DATA_OTHER)
+        {
+            // All the other kinds not already mentioned above.
+            dataKinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_BROWSING_HISTORY |
+                         COREWEBVIEW2_BROWSING_DATA_KINDS_SETTINGS |
+                         COREWEBVIEW2_BROWSING_DATA_KINDS_DOWNLOAD_HISTORY |
+                         COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL |
+                         COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE;
+        }
+    }
+
+    profile2->ClearBrowsingDataInTimeRange(
+        (COREWEBVIEW2_BROWSING_DATA_KINDS) dataKinds,
+        (double) (since.IsValid() ? since.GetTicks() : 0),
+        (double) wxDateTime::Now().GetTicks(),
+        Callback<ICoreWebView2ClearBrowsingDataCompletedHandler>(
+            [this](HRESULT error) -> HRESULT
+        {
+            wxWebViewEvent event(wxEVT_WEBVIEW_BROWSING_DATA_CLEARED, GetId(), wxString(), wxString());
+            event.SetInt(SUCCEEDED(error) ? 1 : 0);
+            event.SetEventObject(this);
+            AddPendingEvent(event);
+            return S_OK;
+        }).Get());
+
+    return true;
+}
+
+void *wxWebViewEdge::GetNativeBackend() const
 {
     return m_impl->m_webView;
 }
@@ -1556,8 +1979,14 @@ void wxWebViewEdge::RegisterHandler(wxSharedPtr<wxWebViewHandler> handler)
 
     if (m_impl->m_webView)
     {
+        // Register filter for virtual host URLs (e.g., *://memory.wxsite/*)
         wxString filterURI = wxString::Format("*://%s/*", handlerHost);
-        m_impl->m_webView->AddWebResourceRequestedFilter(filterURI.wc_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        m_impl->AddWebResourceRequestedFilter(filterURI);
+
+        // Also register filter for scheme URLs (e.g., memory:*)
+        // This is needed for resources referenced in HTML like <img src='memory:logo.png'>
+        wxString schemeFilter = handler->GetName() + ":*";
+        m_impl->AddWebResourceRequestedFilter(schemeFilter);
     }
 }
 

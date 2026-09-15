@@ -187,8 +187,7 @@ int MyApp::OnExit()
 {
     delete m_dial;
 
-    // exit code is 0, everything is ok
-    return 0;
+    return wxApp::OnExit();
 }
 
 void MyApp::OnConnected(wxDialUpEvent& event)
@@ -319,9 +318,9 @@ void MyFrame::OnEnumISPs(wxCommandEvent& WXUNUSED(event))
     else
     {
         wxString msg = "Known ISPs:\n";
-        for ( size_t n = 0; n < nCount; n++ )
+        for ( const auto& name : names )
         {
-            msg << names[n] << '\n';
+            msg << name << '\n';
         }
 
         wxLogMessage(msg);

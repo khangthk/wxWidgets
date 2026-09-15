@@ -43,6 +43,7 @@ class wxTextCoalesceData
 public:
     wxTextCoalesceData(GtkWidget* widget, gulong handlerAfterKeyPress)
         : m_handlerAfterKeyPress(handlerAfterKeyPress)
+        , m_widget(widget)
     {
         m_inKeyPress = false;
         m_pendingTextChanged = false;
@@ -52,12 +53,17 @@ public:
         g_signal_handler_block(widget, m_handlerAfterKeyPress);
     }
 
-    void StartHandlingKeyPress(GtkWidget* widget)
+    ~wxTextCoalesceData()
+    {
+        g_signal_handler_disconnect(m_widget, m_handlerAfterKeyPress);
+    }
+
+    void StartHandlingKeyPress()
     {
         m_inKeyPress = true;
         m_pendingTextChanged = false;
 
-        g_signal_handler_unblock(widget, m_handlerAfterKeyPress);
+        g_signal_handler_unblock(m_widget, m_handlerAfterKeyPress);
     }
 
     bool SetPendingIfInKeyPress()
@@ -70,9 +76,9 @@ public:
         return true;
     }
 
-    bool EndHandlingKeyPressAndCheckIfPending(GtkWidget* widget)
+    bool EndHandlingKeyPressAndCheckIfPending()
     {
-        g_signal_handler_block(widget, m_handlerAfterKeyPress);
+        g_signal_handler_block(m_widget, m_handlerAfterKeyPress);
 
         wxASSERT( m_inKeyPress );
         m_inKeyPress = false;
@@ -89,6 +95,7 @@ private:
     bool m_inKeyPress;
     bool m_pendingTextChanged;
     const gulong m_handlerAfterKeyPress;
+    GtkWidget* const m_widget;
 
     wxDECLARE_NO_COPY_CLASS(wxTextCoalesceData);
 };
@@ -120,14 +127,14 @@ extern "C" {
 // to send a single wxEVT_TEXT even if we received several (typically two, when
 // the selected text in the control is replaced by new text) "changed" signals.
 static gboolean
-wx_gtk_text_after_key_press(GtkWidget* widget,
+wx_gtk_text_after_key_press(GtkWidget*,
                             GdkEventKey* WXUNUSED(gdk_event),
                             wxTextEntry* entry)
 {
     wxTextCoalesceData* const data = entry->GTKGetCoalesceData();
     wxCHECK_MSG( data, FALSE, "must be non-null if this handler is called" );
 
-    if ( data->EndHandlingKeyPressAndCheckIfPending(widget) )
+    if ( data->EndHandlingKeyPressAndCheckIfPending() )
     {
         entry->GTKOnTextChanged();
     }
@@ -161,11 +168,7 @@ wx_gtk_insert_text_callback(GtkEditable *editable,
 {
     GtkEntry *entry = GTK_ENTRY (editable);
 
-#if GTK_CHECK_VERSION(3,0,0) || defined(GSEAL_ENABLE)
-    const int text_max_length = gtk_entry_buffer_get_max_length(gtk_entry_get_buffer(entry));
-#else
-    const int text_max_length = entry->text_max_length;
-#endif
+    const int text_max_length = gtk_entry_get_max_length(entry);
 
     bool handled = false;
 
@@ -178,15 +181,21 @@ wx_gtk_insert_text_callback(GtkEditable *editable,
         // characters (in first approximation, anyhow...).
         if ( text_length + g_utf8_strlen(new_text, -1) > text_max_length )
         {
-            // Prevent the new text from being inserted.
-            handled = true;
-
-            // Currently we don't insert anything at all, but it would be better to
-            // insert as many characters as would fit into the text control and
-            // only discard the rest.
-
             // Notify the user code about overflow.
             text->SendMaxLenEvent();
+
+            // Don't prevent the new text from being inserted, the native
+            // control will insert as much of it as possible, which is better
+            // than not inserting anything at all.
+
+#ifndef __WXGTK3__
+            // GTK 2 will generate a "changed" signal even if the text doesn't
+            // change at all, as happens when it's already at max length, which
+            // is unexpected and shouldn't result in a spurious wxEVT_TEXT
+            // event, so pretend that we handled the signal in this case.
+            if ( text_length == text_max_length )
+                handled = true;
+#endif // GTK < 3
         }
     }
 
@@ -447,11 +456,9 @@ public:
     {
         wxGtkObject<GtkListStore> store(gtk_list_store_new (1, G_TYPE_STRING));
 
-        for ( wxArrayString::const_iterator i = strings.begin();
-              i != strings.end();
-              ++i )
+        for ( const auto& string : strings )
         {
-            AppendToStore(store, *i);
+            AppendToStore(store, string);
         }
 
         UseModel(store);
@@ -603,12 +610,7 @@ wx_gtk_entry_parent_grab_notify (GtkWidget *widget,
 // initialization and destruction
 // ----------------------------------------------------------------------------
 
-wxTextEntry::wxTextEntry()
-{
-    m_autoCompleteData = nullptr;
-    m_coalesceData = nullptr;
-    m_isUpperCase = false;
-}
+wxTextEntry::wxTextEntry() = default;
 
 wxTextEntry::~wxTextEntry()
 {
@@ -976,7 +978,7 @@ void wxTextEntry::GTKEntryOnKeypress(GtkWidget* widget) const
         m_coalesceData = new wxTextCoalesceData(widget, handler);
     }
 
-    m_coalesceData->StartHandlingKeyPress(widget);
+    m_coalesceData->StartHandlingKeyPress();
 }
 
 int wxTextEntry::GTKEntryIMFilterKeypress(GdkEventKey* event) const

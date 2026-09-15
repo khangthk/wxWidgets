@@ -261,105 +261,34 @@ wxString wxFileNameFromPath (const wxString& path)
     return wxFileName(path).GetFullName();
 }
 
-// Return just the directory, or nullptr if no directory
-wxChar *
-wxPathOnly (wxChar *path)
-{
-    if (path && *path)
-    {
-        static wxChar buf[_MAXPATHLEN];
-
-        int l = wxStrlen(path);
-        int i = l - 1;
-        if ( i >= _MAXPATHLEN )
-            return nullptr;
-
-        // Local copy
-        wxStrcpy (buf, path);
-
-        // Search backward for a backward or forward slash
-        while (i > -1)
-        {
-            // Unix like or Windows
-            if (path[i] == wxT('/') || path[i] == wxT('\\'))
-            {
-                buf[i] = 0;
-                return buf;
-            }
-#ifdef __VMS__
-            if (path[i] == wxT(']'))
-            {
-                buf[i+1] = 0;
-                return buf;
-            }
-#endif
-            i --;
-        }
-
-#if defined(__WINDOWS__)
-        // Try Drive specifier
-        if (wxIsalpha (buf[0]) && buf[1] == wxT(':'))
-        {
-            // A:junk --> A:. (since A:.\junk Not A:\junk)
-            buf[2] = wxT('.');
-            buf[3] = wxT('\0');
-            return buf;
-        }
-#endif
-    }
-    return nullptr;
-}
-
-// Return just the directory, or nullptr if no directory
+// Return just the directory, or empty string if no directory
 wxString wxPathOnly (const wxString& path)
 {
-    if (!path.empty())
-    {
-        wxChar buf[_MAXPATHLEN];
+    wxString res = wxFileName(path).GetPath();
 
-        int l = path.length();
-        int i = l - 1;
-
-        if ( i >= _MAXPATHLEN )
-            return wxString();
-
-        // Local copy
-        wxStrcpy(buf, path);
-
-        // Search backward for a backward or forward slash
-        while (i > -1)
-        {
-            // Unix like or Windows
-            if (path[i] == wxT('/') || path[i] == wxT('\\'))
-            {
-                // Don't return an empty string
-                if (i == 0)
-                    i ++;
-                buf[i] = 0;
-                return wxString(buf);
-            }
-#ifdef __VMS__
-            if (path[i] == wxT(']'))
-            {
-                buf[i+1] = 0;
-                return wxString(buf);
-            }
-#endif
-            i --;
-        }
-
+    // For compatibility with the old behaviour of this function, we need to
+    // return "X:" for paths with volume and absolute path under Windows and
+    // "X:." for paths with volume and relative path.
 #if defined(__WINDOWS__)
-        // Try Drive specifier
-        if (wxIsalpha (buf[0]) && buf[1] == wxT(':'))
+    if ( res.size() >= 2 && wxIsalpha(res[0]) && res[1] == wxT(':') )
+    {
+        switch ( res.size() )
         {
-            // A:junk --> A:. (since A:.\junk Not A:\junk)
-            buf[2] = wxT('.');
-            buf[3] = wxT('\0');
-            return wxString(buf);
+            case 2:
+                // "X:" --> "X:."
+                res += wxT('.');
+                break;
+
+            case 3:
+                // "X:\" --> "X:"
+                if ( res[2] == wxFILE_SEP_PATH )
+                    res.erase(2);
+                break;
         }
-#endif
     }
-    return wxEmptyString;
+#endif // __WINDOWS__
+
+    return res;
 }
 
 // Utility for converting delimiters in DOS filenames to UNIX style
@@ -576,7 +505,7 @@ wxRenameFile(const wxString& file1, const wxString& file2, bool overwrite)
 {
     if ( !overwrite && wxFileExists(file2) )
     {
-        wxLogSysError
+        wxLogError
         (
             _("Failed to rename the file '%s' to '%s' because the destination file already exists."),
             file1.c_str(), file2.c_str()
@@ -584,6 +513,25 @@ wxRenameFile(const wxString& file1, const wxString& file2, bool overwrite)
 
         return false;
     }
+
+#ifdef __WINDOWS__
+    // Prefer MoveFileEx() to the CRT rename() used below because it can
+    // replace the already existing destination file and does it atomically,
+    // at least when both files are on the same volume (when they are not,
+    // MOVEFILE_COPY_ALLOWED makes it fall back on copying the file, which
+    // can't be atomic).
+    DWORD flags = MOVEFILE_COPY_ALLOWED;
+    if ( overwrite )
+        flags |= MOVEFILE_REPLACE_EXISTING;
+
+    if ( ::MoveFileEx(file1.t_str(), file2.t_str(), flags) )
+        return true;
+
+    // Still fall back on the generic code below if it failed: it may succeed
+    // in some cases in which MoveFileEx() doesn't, e.g. when the destination
+    // file is opened by another process, which prevents it from being
+    // replaced but not necessarily from being overwritten.
+#endif // __WINDOWS__
 
     // Normal system call
   if ( wxRename (file1, file2) == 0 )
@@ -595,7 +543,7 @@ wxRenameFile(const wxString& file1, const wxString& file2, bool overwrite)
     return true;
   }
   // Give up
-  wxLogSysError(_("File '%s' couldn't be renamed '%s'"), file1, file2);
+  wxLogSysError(_("File '%s' couldn't be renamed to '%s'"), file1, file2);
   return false;
 }
 
@@ -635,7 +583,7 @@ bool wxMkdir(const wxString& dir, int perm)
   #endif
 #else  // MSW and VC++
     wxUnusedVar(perm);
-    if ( wxMkDir(dir.fn_str()) != 0 )
+    if ( wxMkDir(dir) != 0 )
 #endif // !MSW/MSW
     {
         wxLogSysError(_("Directory '%s' couldn't be created"), dir);
@@ -1090,13 +1038,21 @@ wxFileKind wxGetFileKind(FILE *fp)
 #if defined(wxFILEKIND_STUB)
     (void)fp;
     return wxFILE_KIND_DISK;
-#elif defined(__WINDOWS__) && !defined(__CYGWIN__) && !defined(__WINE__)
-    return fp ? wxGetFileKind(_fileno(fp)) : wxFILE_KIND_UNKNOWN;
 #else
-    return fp ? wxGetFileKind(fileno(fp)) : wxFILE_KIND_UNKNOWN;
+    return fp ? wxGetFileKind(wxGetFileDescriptor(fp)) : wxFILE_KIND_UNKNOWN;
 #endif
 }
 
+int wxGetFileDescriptor(FILE *fp)
+{
+    wxCHECK_MSG( fp, -1, wxT("invalid file") );
+
+#if defined(__WINDOWS__) && !defined(__CYGWIN__) && !defined(__WINE__)
+    return _fileno(fp);
+#else
+    return fileno(fp);
+#endif
+}
 
 //------------------------------------------------------------------------
 // wild character routines

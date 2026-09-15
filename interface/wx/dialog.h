@@ -112,8 +112,6 @@ enum wxDialogLayoutAdaptationMode
     @style{wxMINIMIZE_BOX}
            Displays a minimize box on the dialog. This style implicitly enables
            wxCAPTION too.
-    @style{wxTHICK_FRAME}
-           Display a thick frame around the window.
     @style{wxSTAY_ON_TOP}
            The dialog stays on top of all other windows.
     @style{wxNO_3D}
@@ -166,7 +164,10 @@ public:
         Constructor.
 
         @param parent
-            Can be @NULL, a frame or another dialog box.
+            Can be @NULL, a frame or another dialog box. Please note that when
+            the parent is @NULL, the dialog will be owned by the application's
+            top window, if any. Use ::wxDIALOG_NO_PARENT style to really make
+            dialog not owned by any window.
         @param id
             An identifier for the dialog. A value of -1 is taken to mean a
             default.

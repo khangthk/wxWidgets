@@ -1000,9 +1000,8 @@ const wxScopedCharBuffer wxString::ToAscii(char replaceWith) const
     wxCharBuffer buffer(length());
     char *dest = buffer.data();
 
-    for ( const_iterator i = begin(); i != end(); ++i )
+    for ( const auto c : *this )
     {
-        wxUniChar c(*i);
         // FIXME-UTF8: unify substituted char ('_') with wxUniChar ('?')
         *dest++ = c.IsAscii() ? (char)c : replaceWith;
 
@@ -1127,20 +1126,22 @@ wxString wxString::Left(size_t nCount) const
 // (returns the whole string if ch not found)
 wxString wxString::BeforeFirst(wxUniChar ch, wxString *rest) const
 {
+  wxString ret;
   int iPos = Find(ch);
   if ( iPos == wxNOT_FOUND )
   {
-    iPos = length();
+    ret = *this;
     if ( rest )
       rest->clear();
   }
   else
   {
+    ret.assign(*this, 0, iPos);
     if ( rest )
       rest->assign(*this, iPos + 1, npos);
   }
 
-  return wxString(*this, 0, iPos);
+  return ret;
 }
 
 /// get all characters before the last occurrence of ch
@@ -1279,9 +1280,9 @@ size_t wxString::Replace(const wxString& strOld,
 
 bool wxString::IsAscii() const
 {
-    for ( const_iterator i = begin(); i != end(); ++i )
+    for ( const auto c : *this )
     {
-        if ( !(*i).IsAscii() )
+        if ( !c.IsAscii() )
             return false;
     }
 
@@ -1290,9 +1291,9 @@ bool wxString::IsAscii() const
 
 bool wxString::IsWord() const
 {
-    for ( const_iterator i = begin(); i != end(); ++i )
+    for ( const auto c : *this )
     {
-        if ( !wxIsalpha(*i) )
+        if ( !wxIsalpha(c) )
             return false;
     }
 
@@ -1332,16 +1333,16 @@ wxString wxString::Strip(stripType w) const
 
 wxString& wxString::MakeUpper()
 {
-  for ( iterator it = begin(), en = end(); it != en; ++it )
-    *it = (wxChar)wxToupper(*it);
+  for ( auto&& c : *this )
+    c = (wxChar)wxToupper(c);
 
   return *this;
 }
 
 wxString& wxString::MakeLower()
 {
-  for ( iterator it = begin(), en = end(); it != en; ++it )
-    *it = (wxChar)wxTolower(*it);
+  for ( auto&& c : *this )
+    c = (wxChar)wxTolower(c);
 
   return *this;
 }
@@ -1492,7 +1493,7 @@ ToNumeric(T* pVal,
     PreserveErrno preserveErrno;
     errno = 0;
 
-    wxStringCharType *end;
+    wxStringCharType *end = nullptr;
 
     const R res = convert(start, &end, base);
     if ( rangeCheck && !rangeCheck(res) )
@@ -2243,9 +2244,9 @@ match:
 int wxString::Freq(wxUniChar ch) const
 {
     int count = 0;
-    for ( const_iterator i = begin(); i != end(); ++i )
+    for ( const auto c : *this )
     {
-        if ( *i == ch )
+        if ( c == ch )
             count ++;
     }
     return count;

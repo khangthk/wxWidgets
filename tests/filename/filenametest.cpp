@@ -37,7 +37,6 @@
 #endif // __UNIX__
 
 #include "testfile.h"
-#include "testdate.h"
 
 // Use a hack to keep using wxPATH_NORM_ALL in this test code without getting
 // deprecation warnings for it.
@@ -82,6 +81,7 @@ static struct TestFileNameInfo
     { "c:foo.bar", "c", "", "foo", "bar", false, wxPATH_DOS },
     { "c:\\foo.bar", "c", "\\", "foo", "bar", true, wxPATH_DOS },
     { "c:\\Windows\\command.com", "c", "\\Windows", "command", "com", true, wxPATH_DOS },
+    { R"(\\?\c:\Windows\System32\cmd.exe)", R"(\\?\c:)", R"(\Windows\System32)", R"(cmd)", R"(exe)", true, wxPATH_DOS },
     { "\\\\?\\Volume{8089d7d7-d0ac-11db-9dd0-806d6172696f}\\",
       "\\\\?\\Volume{8089d7d7-d0ac-11db-9dd0-806d6172696f}", "\\", "", "", true, wxPATH_DOS },
     { "\\\\?\\Volume{8089d7d7-d0ac-11db-9dd0-806d6172696f}\\Program Files\\setup.exe",
@@ -746,11 +746,10 @@ TEST_CASE("wxFileName::Exists", "[filename]")
     CHECK( wxFileName::Exists("/proc/self", wxFILE_EXISTS_SYMLINK) );
 #endif // __LINUX__
 #ifndef __VMS
-   // OpenVMS does not have mkdtemp
-    wxString name = dirTemp.GetPath() + "/socktmpdirXXXXXX";
-    wxString socktempdir = wxString::From8BitData(mkdtemp(name.char_str()));
-    wxON_BLOCK_EXIT2(wxRmdir, socktempdir, 0);
-    wxString sockfile = socktempdir + "/socket";
+    TempDir socktempdir("socktmpdir");
+    REQUIRE(socktempdir.IsOk());
+    wxFileName sockfilename(socktempdir.GetName(), "socket");
+    wxString sockfile = sockfilename.GetFullPath();
     wxTCPServer server;
     server.Create(sockfile);
     CHECK( wxFileName::Exists(sockfile, wxFILE_EXISTS_SOCKET) );
@@ -777,6 +776,107 @@ TEST_CASE("wxFileName::Mkdir", "[filename]")
     //else: creating the directory may fail because of permissions
 }
 
+TEST_CASE("wxFileName::RmdirParents", "[filename]")
+{
+    TempDir tempdir("wxrmdirparents");
+    REQUIRE( tempdir.IsOk() );
+
+    // Basic case: removing a directory also removes its now-empty parents,
+    // stopping as soon as a non-empty ancestor is reached.
+    SECTION("wxPATH_RMDIR_PARENTS")
+    {
+        // Create "a/b/c" under the temporary directory and put a file in
+        // "a", so that removing "c" and then "b" should succeed, as they're
+        // empty, but removing "a" should fail because of the file still in
+        // it, stopping the upwards removal there.
+        wxFileName dirA(wxFileName::DirName(tempdir.GetName()));
+        dirA.AppendDir("a");
+        REQUIRE( dirA.Mkdir() );
+
+        wxFileName dirB(dirA);
+        dirB.AppendDir("b");
+        REQUIRE( dirB.Mkdir() );
+
+        wxFileName dirC(dirB);
+        dirC.AppendDir("c");
+        REQUIRE( dirC.Mkdir() );
+
+        wxFileName fileInA(dirA.GetPath(), "file");
+        {
+            wxFile file(fileInA.GetFullPath(), wxFile::write);
+            REQUIRE( file.IsOpened() );
+        }
+
+        CHECK( dirC.Rmdir(wxPATH_RMDIR_PARENTS) );
+
+        CHECK( !dirC.DirExists() );
+        CHECK( !dirB.DirExists() );
+        CHECK( dirA.DirExists() );
+        CHECK( fileInA.FileExists() );
+    }
+
+    // wxPATH_RMDIR_PARENTS can be combined with wxPATH_RMDIR_FULL: the
+    // target directory is removed even if it contains empty subdirectories,
+    // while its ancestors are still only removed if they turn out empty.
+    SECTION("wxPATH_RMDIR_PARENTS | wxPATH_RMDIR_FULL")
+    {
+        // Create "a/f/g", with a sibling file directly in the temporary
+        // directory to stop the upwards removal once "a" is gone, so that
+        // the temporary directory itself is left alone for TempDir to clean
+        // up as usual.
+        wxFileName dirA(wxFileName::DirName(tempdir.GetName()));
+        dirA.AppendDir("a");
+        REQUIRE( dirA.Mkdir() );
+
+        wxFileName dirF(dirA);
+        dirF.AppendDir("f");
+        REQUIRE( dirF.Mkdir() );
+
+        wxFileName dirG(dirF);
+        dirG.AppendDir("g");
+        REQUIRE( dirG.Mkdir() );
+
+        wxFileName keepFile(tempdir.GetName(), "keep");
+        {
+            wxFile file(keepFile.GetFullPath(), wxFile::write);
+            REQUIRE( file.IsOpened() );
+        }
+
+        CHECK( dirF.Rmdir(wxPATH_RMDIR_FULL | wxPATH_RMDIR_PARENTS) );
+
+        CHECK( !dirG.DirExists() );
+        CHECK( !dirF.DirExists() );
+        CHECK( !dirA.DirExists() );
+        CHECK( wxFileName::DirExists(tempdir.GetName()) );
+        CHECK( keepFile.FileExists() );
+    }
+
+    // On the other hand, wxPATH_RMDIR_PARENTS can't be combined with
+    // wxPATH_RMDIR_RECURSIVE, as doing this could silently remove more than
+    // what was explicitly asked for.
+    SECTION("wxPATH_RMDIR_PARENTS | wxPATH_RMDIR_RECURSIVE")
+    {
+        wxFileName dirX(wxFileName::DirName(tempdir.GetName()));
+        dirX.AppendDir("x");
+        REQUIRE( dirX.Mkdir() );
+
+        wxFileName fileInX(dirX.GetPath(), "file");
+        {
+            wxFile file(fileInX.GetFullPath(), wxFile::write);
+            REQUIRE( file.IsOpened() );
+        }
+
+        WX_ASSERT_FAILS_WITH_ASSERT(
+            wxFileName::Rmdir(dirX.GetPath(),
+                wxPATH_RMDIR_RECURSIVE | wxPATH_RMDIR_PARENTS)
+        );
+
+        // Nothing should have been removed.
+        CHECK( dirX.DirExists() );
+        CHECK( fileInX.FileExists() );
+    }
+}
+
 TEST_CASE("wxFileName::SameAs", "[filename]")
 {
     wxFileName fn1( wxFileName::CreateTempFileName( "filenametest1" ) );
@@ -791,24 +891,20 @@ TEST_CASE("wxFileName::SameAs", "[filename]")
     CHECK( !fn1.SameAs( fn2 ) );
 
 #if defined(__UNIX__)
-    // We need to create a temporary directory and a temporary link.
-    // Unfortunately we can't use wxFileName::CreateTempFileName() for either
-    // as it creates plain files, so use tempnam() explicitly instead.
-    char* tn = tempnam(nullptr, "wxfn1");
-    const wxString tempdir1 = wxString::From8BitData(tn);
-    free(tn);
+    TempDir tempdir("wxfn");
+    REQUIRE(tempdir.IsOk());
 
-    REQUIRE( wxFileName::Mkdir(tempdir1) );
-    // Unfortunately the casts are needed to select the overload we need here.
-    wxON_BLOCK_EXIT2( static_cast<bool (*)(const wxString&, int)>(wxFileName::Rmdir),
-                      tempdir1, static_cast<int>(wxPATH_RMDIR_RECURSIVE) );
+    wxFileName tempdir1fn;
+    tempdir1fn.AssignDir(tempdir.GetName());
+    tempdir1fn.AppendDir("dir1");
+    REQUIRE(tempdir1fn.Mkdir());
+    const wxString tempdir1 = tempdir1fn.GetPath();
 
-    tn = tempnam(nullptr, "wxfn2");
-    const wxString tempdir2 = wxString::From8BitData(tn);
-    free(tn);
+    wxFileName tempdir2fn;
+    tempdir2fn.AssignDir(tempdir.GetName());
+    tempdir2fn.AppendDir("dir2");
+    const wxString tempdir2 = tempdir2fn.GetPath();
     CHECK( symlink(tempdir1.c_str(), tempdir2.c_str()) == 0 );
-    wxON_BLOCK_EXIT1( wxRemoveFile, tempdir2 );
-
 
     wxFileName fn3(tempdir1, "foo");
     wxFileName fn4(tempdir2, "foo");
@@ -830,18 +926,16 @@ TEST_CASE("wxFileName::SameAs", "[filename]")
 // Tests for functions that are changed by ShouldFollowLink()
 TEST_CASE("wxFileName::Symlinks", "[filename]")
 {
-    const wxString tmpdir(wxStandardPaths::Get().GetTempDir());
+    TempDir tempdirRoot("filenametest");
+    REQUIRE(tempdirRoot.IsOk());
 
+    const wxString tmpdir(wxFileName::GetTempDir());
     wxFileName tmpfn(wxFileName::DirName(tmpdir));
 
-    // Create a temporary directory
 #ifdef __VMS
-    wxString name = tmpdir + ".filenametestXXXXXX]";
-    mkdir( name.char_str() , 0222 );
-    wxString tempdir = name;
+    wxString tempdir = tempdirRoot.GetName();
 #else
-    wxString name = tmpdir + "/filenametestXXXXXX";
-    wxString tempdir = wxString::From8BitData(mkdtemp(name.char_str()));
+    wxString tempdir = tempdirRoot.GetName();
     tempdir << wxFileName::GetPathSeparator();
 #endif
     wxFileName tempdirfn(wxFileName::DirName(tempdir));
@@ -975,8 +1069,11 @@ TEST_CASE("wxFileName::Symlinks", "[filename]")
     CHECK( tmpfn.Exists() );
 
     // Finally removing the directory itself does remove everything.
-    CHECK(tempdirfn.Rmdir(wxPATH_RMDIR_RECURSIVE));
+    const bool removed = tempdirfn.Rmdir(wxPATH_RMDIR_RECURSIVE);
+    CHECK(removed);
     CHECK( !tempdirfn.Exists() );
+    if ( removed )
+        tempdirRoot.Dismiss();
 }
 
 #endif // __UNIX__
@@ -1029,6 +1126,49 @@ TEST_CASE("wxFileName::Shortcuts", "[filename]")
    CHECK( fnLinkRel.GetFullName() == fnLink.GetFullName() );
 }
 
+TEST_CASE("wxFileName::LongPath", "[filename]")
+{
+    constexpr const char* dir = "test_directory_name";
+    constexpr const char* file = "test_file_name";
+
+    // Use many nested directories to ensure that the total path length for
+    // a file inside the innermost one is longer than MAX_PATH.
+    wxString path(dir);
+    path += wxFileName::GetPathSeparator();
+    path += path;
+    path += path;
+    path += path;
+    path += path;
+
+    CHECK( path.length() > MAX_PATH );
+
+    REQUIRE( wxFileName::Mkdir(path, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL) );
+
+    // If we managed to create it, ensure that we delete it.
+    class CleanupTestDir
+    {
+    public:
+        explicit CleanupTestDir(const wxString& dir) : m_dir(dir) { }
+        ~CleanupTestDir() { wxFileName::Rmdir(m_dir, wxPATH_RMDIR_RECURSIVE); }
+
+    private:
+        const wxString m_dir;
+    } cleanupTestDir(dir);
+
+    const wxFileName fn{path, file};
+
+    // Create the file in this directory by constructing a temporary wxFile.
+    {
+        wxFile f(fn.GetFullPath(), wxFile::write);
+        REQUIRE( f.IsOpened() );
+        REQUIRE( f.Write("Hello wx") );
+    }
+
+    // Try accessing it too.
+    CHECK( fn.FileExists() );
+    CHECK( fn.GetSize() == 8 );
+}
+
 #endif // __WINDOWS__
 
 #ifdef __LINUX__
@@ -1052,3 +1192,36 @@ TEST_CASE("wxFileName::GetSizeSpecial", "[filename][linux][special-file]")
 }
 
 #endif // __LINUX__
+
+// This test is disabled by default as it requires the environment variable
+// below to be defined to point to the file to test.
+TEST_CASE("wxFileName::Test", "[.]")
+{
+    wxString file;
+    REQUIRE( wxGetEnv("WX_TEST_FILENAME", &file) );
+
+    wxFileName fn{file};
+    fn.MakeAbsolute();
+
+    WARN
+    (
+        "Absolute path:\t\"" << fn.GetFullPath() << "\"\n"
+        "Volume:\t\t\"" << fn.GetVolume() << "\"\n"
+        "Name:\t\t\t\"" << fn.GetName() << "\"\n"
+        "Extension:\t\t\"" << fn.GetExt() << "\"\n"
+        "Path:\t\t\t[" << wxJoin(fn.GetDirs(), ' ', '\\') << "]\n"
+    );
+
+    if ( fn.FileExists() )
+    {
+        WARN("File of size:\t" << fn.GetHumanReadableSize() << "\n");
+    }
+    else if ( fn.DirExists() )
+    {
+        WARN("Is a directory");
+    }
+    else
+    {
+        FAIL("Does not exist");
+    }
+}

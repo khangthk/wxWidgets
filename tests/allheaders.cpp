@@ -321,6 +321,11 @@
     GCC_TURN_OFF(suggest-override)
 #endif
 
+    // There are just too many of those in wxDFB headers.
+#if defined(__WXDFB__)
+    GCC_TURN_OFF(suggest-override)
+#endif
+
     // The rest are the warnings that we don't ever want to enable.
 
     // This one is given whenever inheriting from std:: classes without using
@@ -413,4 +418,32 @@ TEST_CASE("wxNO_IMPLICIT_WXSTRING_ENCODING", "[string]")
 #endif
 
     wxLogSysError(wxASCII_STR("Bogus error for testing"));
+
+    // Check that all translation macros expand to compilable
+    // code also when wxNO_IMPLICIT_WXSTRING_ENCODING is enabled.
+
+    _("some text");
+    wxPLURAL("singular", "plural", 2);
+    wxGETTEXT_IN_CONTEXT("context", "text");
+    wxGETTEXT_IN_CONTEXT_PLURAL("context", "singular", "plural", 3);
+
+    // Also wide strings can be used:
+    _(L"item");
+    wxGETTEXT_IN_CONTEXT(L"context", L"item");
+    wxPLURAL(L"sing", L"plur", 3);
+    wxGETTEXT_IN_CONTEXT_PLURAL(L"context", L"sing", L"plur", 3);
 }
+
+// Check that wxPropertyGrid macros compile without warnings too.
+#if wxUSE_PROPGRID
+
+// Except that it proposes const attribute to the function declared by the
+// macro which would be a wrong thing to do it general, so suppress it.
+#ifdef GCC_TURN_OFF
+    GCC_TURN_OFF(suggest-attribute=const)
+#endif
+
+WX_PG_DECLARE_VARIANT_DATA(wxArrayDouble)
+WX_PG_IMPLEMENT_VARIANT_DATA_DUMMY_EQ(wxArrayDouble)
+
+#endif // wxUSE_PROPGRID

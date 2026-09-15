@@ -91,7 +91,7 @@ public:
     wxToolInfo(HWND hwndOwner, unsigned int id, const wxRect& rc)
     {
         // initialize all members
-        ::ZeroMemory(this, sizeof(TOOLINFO));
+        wxZeroMemory(*this);
 
         // the structure TOOLINFO has been extended with a 4 byte field in
         // version 4.70 of comctl32.dll and another one in 5.01 but we don't
@@ -318,7 +318,7 @@ WXHWND wxToolTip::GetToolTipCtrl()
        if ( ms_hwndTT )
        {
            HWND hwnd = (HWND)ms_hwndTT;
-           wxMSWDarkMode::AllowForWindow(hwnd);
+           SetDarkOrLightMode();
            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
@@ -654,6 +654,12 @@ void wxToolTip::DoForAllWindows(void (wxToolTip::*func)(WXHWND))
             (this->*func)(*it);
         }
     }
+}
+
+void wxToolTip::SetDarkOrLightMode()
+{
+    if ( ms_hwndTT )
+        wxMSWDarkMode::AllowForWindow(ms_hwndTT);
 }
 
 #endif // wxUSE_TOOLTIPS

@@ -74,19 +74,6 @@ int wxCaretBase::GetBlinkTime()
 void wxCaretBase::SetBlinkTime(int milliseconds)
 {
     gs_blinkTime = milliseconds;
-
-#ifdef _WXGTK__
-    GtkSettings *settings = gtk_settings_get_default();
-    if (millseconds == 0)
-    {
-        gtk_settings_set_long_property(settings, "gtk-cursor-blink", gtk_false, nullptr);
-    }
-    else
-    {
-        gtk_settings_set_long_property(settings, "gtk-cursor-blink", gtk_true, nullptr);
-        gtk_settings_set_long_property(settings, "gtk-cursor-time", milliseconds, nullptr);
-    }
-#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -140,6 +127,12 @@ void wxCaret::DoMove()
     if (m_overlay.IsNative())
     {
         m_overlay.Reset();
+
+        // Resetting a native overlay clears its contents, so redraw the caret
+        // immediately at its new position if it is currently visible.
+        if ( IsVisible() && !m_blinkedOut )
+            Refresh();
+
         return;
     }
 
@@ -228,6 +221,8 @@ void wxCaret::Blink()
 void wxCaret::Refresh()
 {
     wxClientDC dcWin(GetWindow());
+    GetWindow()->PrepareDC(dcWin);
+
     if (m_overlay.IsNative())
     {
         wxDCOverlay dcOverlay(m_overlay, &dcWin, m_x, m_y, m_width, m_height);

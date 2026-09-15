@@ -24,6 +24,7 @@
 
 #include "wx/treectrl.h"
 #include "wx/imaglist.h"
+#include "wx/dcclient.h"
 
 extern WXDLLEXPORT_DATA(const char) wxTreeCtrlNameStr[] = "treeCtrl";
 
@@ -200,20 +201,78 @@ void wxTreeCtrlBase::SetItemState(const wxTreeItemId& item, int state)
     DoSetItemState(item, state);
 }
 
-static void
-wxGetBestTreeSize(const wxTreeCtrlBase* treeCtrl, wxTreeItemId id, wxSize& size)
+bool wxTreeCtrlBase::HasAnyImages() const
 {
-    wxRect rect;
+    return HasImages() || m_imagesState.HasImages();
+}
 
-    if ( treeCtrl->GetBoundingRect(id, rect, true /* just the item */) )
+namespace
+{
+
+// This is used to store context used for determining the best tree size.
+//
+// It should only be used for non-empty tree, i.e. with a valid root item.
+class TreeSizer
+{
+public:
+    // Precompute the values that we will need.
+    explicit TreeSizer(const wxTreeCtrlBase* tree)
+        : treeCtrl(const_cast<wxTreeCtrlBase*>(tree)),
+          dc(const_cast<wxTreeCtrlBase*>(tree)),
+          iconSize(tree->GetImageLogicalSize(tree)),
+          indent(tree->FromDIP(tree->GetIndent()))
+    {
+    }
+
+    wxSize GetSize() const
+    {
+        return DoGetSizeOf(treeCtrl->GetRootItem(), 1);
+    }
+
+private:
+    // Recursive function actually computing the size.
+    wxSize DoGetSizeOf(wxTreeItemId id, int depth) const;
+
+    wxTreeCtrlBase* const treeCtrl;
+    wxInfoDC dc;
+    const wxSize iconSize;
+    const int indent;
+};
+
+wxSize TreeSizer::DoGetSizeOf(wxTreeItemId id, int depth) const
+{
+    wxSize size;
+
+    // Rectangle of the item may be empty if the item is not currently visible,
+    // e.g. because the branch containing it is collapsed.
+    wxRect rect;
+    if ( treeCtrl->GetBoundingRect(id, rect, true /* just the item */)
+         && !rect.IsEmpty() ) // check for valid rect
     {
         // Translate to logical position so we get the full extent
 #if defined(__WXMSW__) && !defined(__WXUNIVERSAL__)
         rect.x += treeCtrl->GetScrollPos(wxHORIZONTAL);
-        rect.y += treeCtrl->GetScrollPos(wxVERTICAL);
 #endif
 
-        size.IncTo(wxSize(rect.GetRight(), rect.GetBottom()));
+        size.x = rect.GetRight();
+        size.y = rect.GetHeight();
+    }
+    else if (id != treeCtrl->GetRootItem())
+    {
+        // Estimate width for collapsed (invisible) node
+        size = dc.GetTextExtent(treeCtrl->GetItemText(id));
+        size.x += indent * depth;
+#if defined(__WXMSW__)
+        // On Windows there should be some extra space to the right of the text
+        size.x += indent / 2;
+#endif
+
+        if ( treeCtrl->GetItemImage(id) != wxTreeCtrl::NO_IMAGE )
+        {
+            size.x += iconSize.GetWidth();
+            if ( iconSize.y > size.y )
+                size.y = iconSize.GetHeight();
+        }
     }
 
     wxTreeItemIdValue cookie;
@@ -221,12 +280,26 @@ wxGetBestTreeSize(const wxTreeCtrlBase* treeCtrl, wxTreeItemId id, wxSize& size)
           item.IsOk();
           item = treeCtrl->GetNextChild(id, cookie) )
     {
-        wxGetBestTreeSize(treeCtrl, item, size);
+        const wxSize childSize = DoGetSizeOf(item, depth + 1);
+        if ( childSize.x > size.x )
+            size.x = childSize.x;
+        size.y += childSize.y;
     }
+
+    return size;
 }
+
+} // anonymous namespace
 
 wxSize wxTreeCtrlBase::DoGetBestSize() const
 {
+    const wxTreeItemId root = GetRootItem();
+    if ( !root.IsOk() )
+    {
+        // need some minimal size even for empty tree
+        return wxControl::DoGetBestSize();
+    }
+
     wxSize size;
 
     // this doesn't really compute the total bounding rectangle of all items
@@ -235,7 +308,7 @@ wxSize wxTreeCtrlBase::DoGetBestSize() const
 
     if (GetQuickBestSize())
     {
-        for ( wxTreeItemId item = GetRootItem();
+        for ( wxTreeItemId item = root;
               item.IsOk();
               item = GetLastChild(item) )
         {
@@ -256,16 +329,18 @@ wxSize wxTreeCtrlBase::DoGetBestSize() const
     else // use precise, if potentially slow, size computation method
     {
         // iterate over all items recursively
-        wxTreeItemId idRoot = GetRootItem();
-        if ( idRoot.IsOk() )
-            wxGetBestTreeSize(this, idRoot, size);
+        size = TreeSizer{this}.GetSize();
     }
 
-    // need some minimal size even for empty tree
-    if ( !size.x || !size.y )
-        size = wxControl::DoGetBestSize();
-    else // add border size
-        size += GetWindowBorderSize();
+    // Arbitrarily limit the tree height to ~20 lines of text because we don't
+    // want to make it too high even if it contains a lot of items.
+    const int maxHeight = 25 * GetCharHeight();
+
+    if ( size.y > maxHeight )
+        size.y = maxHeight;
+
+    // add border size
+    size += GetWindowBorderSize();
 
     return size;
 }

@@ -64,7 +64,7 @@ enum
 class EditableListboxWidgetsPage : public WidgetsPage
 {
 public:
-    EditableListboxWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist);
+    EditableListboxWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist);
 
     virtual wxWindow *GetWidget() const override { return m_lbox->GetListCtrl(); }
     virtual void RecreateWidget() override { CreateLbox(); }
@@ -115,7 +115,7 @@ wxEND_EVENT_TABLE()
 IMPLEMENT_WIDGETS_PAGE(EditableListboxWidgetsPage, "EditableListbox", GENERIC_CTRLS);
 
 EditableListboxWidgetsPage::EditableListboxWidgetsPage(WidgetsBookCtrl *book,
-                                                       wxImageList *imaglist)
+                                                       wxVector<wxBitmapBundle>& imaglist)
                   : WidgetsPage(book, imaglist, listbox_xpm)
 {
 
@@ -139,20 +139,20 @@ void EditableListboxWidgetsPage::CreateContent()
     m_chkAllowNoReorder = CreateCheckBoxAndAddToSizer(sizerLeft, "Block user reordering", wxID_ANY, sizerLeftBox);
 
     wxButton *btn = new wxButton(sizerLeftBox, EditableListboxPage_Reset, "&Reset");
-    sizerLeft->Add(btn, 0, wxALIGN_CENTRE_HORIZONTAL | wxALL, 15);
+    sizerLeft->Add(btn, wxSizerFlags().CentreHorizontal().TripleBorder());
 
     // right pane
     wxSizer *sizerRight = new wxBoxSizer(wxVERTICAL);
     m_lbox = new wxEditableListBox(this, EditableListboxPage_Listbox,
                                     _("Match these wildcards:"),
                                     wxDefaultPosition, wxDefaultSize, 0);
-    sizerRight->Add(m_lbox, 1, wxGROW | wxALL, 5);
-    sizerRight->SetMinSize(150, 0);
+    sizerRight->Add(m_lbox, wxSizerFlags(1).Expand().Border());
+    sizerRight->SetMinSize(FromDIP(150), 0);
     m_sizerLbox = sizerRight; // save it to modify it later
 
     // the 3 panes panes compose the window
-    sizerTop->Add(sizerLeft, 0, wxGROW | (wxALL & ~wxLEFT), 10);
-    sizerTop->Add(sizerRight, 1, wxGROW | (wxALL & ~wxRIGHT), 10);
+    sizerTop->Add(sizerLeft, wxSizerFlags().Expand().DoubleBorder(wxALL & ~wxLEFT));
+    sizerTop->Add(sizerRight, wxSizerFlags(1).Expand().DoubleBorder(wxALL & ~wxRIGHT));
 
     // final initializations
     Reset();
@@ -201,7 +201,7 @@ void EditableListboxWidgetsPage::CreateLbox()
     NotifyWidgetRecreation(m_lbox);
 
     m_lbox->SetStrings(items);
-    m_sizerLbox->Add(m_lbox, 1, wxGROW | wxALL, 5);
+    m_sizerLbox->Add(m_lbox, wxSizerFlags(1).Expand().Border());
     m_sizerLbox->Layout();
 }
 

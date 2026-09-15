@@ -24,10 +24,12 @@
 
 #include "wx/osx/private.h"
 #include "wx/osx/private/available.h"
+#include "wx/stattext.h"
 
 namespace
 {
 
+#if wxUSE_STATUSBAR
 int GetMacStatusbarHeight()
 {
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_16
@@ -37,12 +39,12 @@ int GetMacStatusbarHeight()
 #endif
         return 24;
 }
+#endif // wxUSE_STATUSBAR
 
 } // anonymous namespace
 
 wxBEGIN_EVENT_TABLE(wxFrame, wxFrameBase)
   EVT_ACTIVATE(wxFrame::OnActivate)
-  EVT_SYS_COLOUR_CHANGED(wxFrame::OnSysColourChanged)
 wxEND_EVENT_TABLE()
 
 // ----------------------------------------------------------------------------
@@ -60,14 +62,39 @@ bool wxFrame::Create(wxWindow *parent,
     if ( !wxTopLevelWindow::Create(parent, id, title, pos, size, style, name) )
         return false;
 
+#if wxUSE_TOOLBAR
+    if ( wxTheApp->OSXIsFullScreenApp() )
+    {
+        if ((parent != nullptr) && (HasFlag(wxCAPTION) || HasFlag(wxCLOSE_BOX)))
+        {
+            // We are on the next screen, provide a back button and title
+            // TODO replace with UINavigationBar
+            wxToolBar *tb = CreateToolBar();
+            if (HasFlag(wxCLOSE_BOX))
+            {
+                tb->AddTool( wxID_CLOSE, wxEmptyString, wxOSXCreateSystemBitmapBundle("chevron.backward", wxDefaultSize) );
+                tb->AddStretchableSpace();
+            }
+            if (HasFlag(wxCAPTION))
+            {
+                tb->AddControl( new wxStaticText( tb, wxID_ANY, title ) );
+                tb->AddStretchableSpace();
+            }
+            tb->Realize();
+        }
+    }
+#endif
+
     return true;
 }
 
 // get the origin of the client area in the client coordinates
 wxPoint wxFrame::GetClientAreaOrigin() const
 {
+    // this gets the size of iOS status bar
     wxPoint pt = wxTopLevelWindow::GetClientAreaOrigin();
 
+    // this adds the size of the toolbar to it
 #if wxUSE_TOOLBAR && !defined(__WXUNIVERSAL__)
     wxToolBar *toolbar = GetToolBar();
     if ( toolbar && toolbar->IsShown() )
@@ -128,7 +155,17 @@ wxStatusBar *wxFrame::OnCreateStatusBar(int number, long style, wxWindowID id,
 void wxFrame::SetStatusBar(wxStatusBar *statbar)
 {
     wxFrameBase::SetStatusBar(statbar);
-    m_nowpeer->SetBottomBorderThickness(statbar ? GetMacStatusbarHeight() : 0);
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_VERSION_11_0
+    if ( WX_IS_MACOS_AVAILABLE(11, 0) )
+    {
+        // textured borders are unwanted, statusbar renders w/o them
+    }
+    else
+#endif
+    {
+        m_nowpeer->SetBottomBorderThickness(statbar ? GetMacStatusbarHeight() : 0);
+    }
 }
 
 void wxFrame::PositionStatusBar()
@@ -145,23 +182,18 @@ void wxFrame::PositionStatusBar()
 }
 #endif // wxUSE_STATUSBAR
 
-// Responds to colour changes, and passes event on to children.
-void wxFrame::OnSysColourChanged(wxSysColourChangedEvent& event)
+void wxFrame::SendSysColourChangedEvents()
 {
     Refresh();
 
 #if wxUSE_STATUSBAR
     if ( m_frameStatusBar )
     {
-        wxSysColourChangedEvent event2;
-
-        event2.SetEventObject( m_frameStatusBar );
-        m_frameStatusBar->GetEventHandler()->ProcessEvent(event2);
+        m_frameStatusBar->SendSysColourChangedEvents();
     }
 #endif // wxUSE_STATUSBAR
 
-    // Propagate the event to the non-top-level children
-    wxWindow::OnSysColourChanged(event);
+    BaseType::SendSysColourChangedEvents();
 }
 
 // Default activation behaviour - set the focus for the first child
@@ -349,18 +381,16 @@ void wxFrame::PositionToolBar()
     }
 #endif
 
-#ifdef __WXOSX_IPHONE__
-    // TODO integrate this in a better way, on iphone the status bar is not a child of the content view
-    // but the toolbar is
-    ch -= 20;
-#endif
-
     if (GetToolBar())
     {
         const int direction = GetToolBar()->GetDirection();
         int tx, ty, tw, th;
 
         tx = ty = 0 ;
+        wxPoint pt = wxTopLevelWindow::GetClientAreaOrigin();
+        tx = pt.x;
+        ty = pt.y;
+
         GetToolBar()->GetSize(&tw, &th);
 
         if (direction == wxTB_LEFT)

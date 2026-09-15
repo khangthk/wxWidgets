@@ -113,7 +113,11 @@ enum
     TextEntry_AutoCompleteKeyLength,
 
     TextEntry_SetHint,
-    TextEntry_End
+    TextEntry_End,
+
+    Theme_Light,
+    Theme_Dark,
+    Theme_System,
 };
 
 const wxChar *WidgetsCategories[MAX_PAGES] = {
@@ -248,6 +252,8 @@ protected:
     {
         event.Enable( CurrentPage()->GetTextEntry() != nullptr );
     }
+
+    void OnTheme(wxCommandEvent& event);
 #endif // wxUSE_MENUS
 
     // initialize the book: add all pages to it
@@ -375,6 +381,10 @@ wxBEGIN_EVENT_TABLE(WidgetsFrame, wxFrame)
                         WidgetsFrame::OnUpdateTextUI)
 
     EVT_MENU(wxID_EXIT, WidgetsFrame::OnExit)
+
+    EVT_MENU(Theme_Light, WidgetsFrame::OnTheme)
+    EVT_MENU(Theme_Dark, WidgetsFrame::OnTheme)
+    EVT_MENU(Theme_System, WidgetsFrame::OnTheme)
 #endif // wxUSE_MENUS
 wxEND_EVENT_TABLE()
 
@@ -584,6 +594,12 @@ WidgetsFrame::WidgetsFrame(const wxString& title)
 
     InitBook();
 
+    wxMenu* menuTheme = new wxMenu;
+    menuTheme->Append(Theme_System, "&System");
+    menuTheme->Append(Theme_Light, "&Light");
+    menuTheme->Append(Theme_Dark, "&Dark");
+    mbar->Append(menuTheme, "T&heme");
+
     // the lower one only has the log listbox and a button to clear it
 #if USE_LOG
     wxStaticBoxSizer *sizerDown = new wxStaticBoxSizer(wxVERTICAL, m_panel, "&Log window");
@@ -591,7 +607,7 @@ WidgetsFrame::WidgetsFrame(const wxString& title)
 
     m_lboxLog = new wxListBox(sizerDownBox, wxID_ANY);
     sizerDown->Add(m_lboxLog, wxSizerFlags(1).Expand().Border());
-    sizerDown->SetMinSize(100, 150);
+    sizerDown->SetMinSize(FromDIP(wxSize(100, 150)));
 #else
     wxSizer *sizerDown = new wxBoxSizer(wxVERTICAL);
 #endif // USE_LOG
@@ -601,7 +617,7 @@ WidgetsFrame::WidgetsFrame(const wxString& title)
 #if USE_LOG
     btn = new wxButton(sizerDownBox, Widgets_ClearLog, "Clear &log");
     sizerBtns->Add(btn);
-    sizerBtns->AddSpacer(10);
+    sizerBtns->AddSpacer(FromDIP(10));
 #endif // USE_LOG
     btn = new wxButton(sizerDownBox, Widgets_Quit, "E&xit");
     sizerBtns->Add(btn);
@@ -609,8 +625,8 @@ WidgetsFrame::WidgetsFrame(const wxString& title)
 
     // put everything together
     sizerTop->Add(m_book, wxSizerFlags(1).Expand().DoubleBorder(wxALL & ~(wxTOP | wxBOTTOM)));
-    sizerTop->AddSpacer(5);
-    sizerTop->Add(sizerDown, wxSizerFlags(0).Expand().DoubleBorder(wxALL & ~wxTOP));
+    sizerTop->AddSpacer(FromDIP(5));
+    sizerTop->Add(sizerDown, wxSizerFlags().Expand().DoubleBorder(wxALL & ~wxTOP));
 
     m_panel->SetSizer(sizerTop);
 
@@ -631,10 +647,8 @@ WidgetsFrame::WidgetsFrame(const wxString& title)
 
 void WidgetsFrame::InitBook()
 {
-    wxImageList *imageList = new wxImageList(ICON_SIZE, ICON_SIZE);
-
-    wxImage img(sample_xpm);
-    imageList->Add(wxBitmap(img.Scale(ICON_SIZE, ICON_SIZE)));
+    wxVector<wxBitmapBundle> imageList;
+    imageList.push_back(WidgetsPage::CreateBitmapBundle(sample_xpm));
 
 #if !USE_TREEBOOK
     WidgetsBookCtrl *books[MAX_PAGES];
@@ -702,7 +716,7 @@ void WidgetsFrame::InitBook()
 
     GetMenuBar()->Append(menuPages, "&Page");
 
-    m_book->AssignImageList(imageList);
+    m_book->SetImages(imageList);
 
     for ( cat = 0; cat < MAX_PAGES; cat++ )
     {
@@ -710,7 +724,7 @@ void WidgetsFrame::InitBook()
         m_book->AddPage(nullptr,WidgetsCategories[cat],false,0);
 #else
         m_book->AddPage(books[cat],WidgetsCategories[cat],false,0);
-        books[cat]->SetImageList(imageList);
+        books[cat]->SetImages(imageList);
 #endif
 
         // now do add them
@@ -746,6 +760,7 @@ void WidgetsFrame::InitBook()
 
     wxTreeItemIdValue cookie;
     tree->EnsureVisible(tree->GetFirstChild(tree->GetRootItem(), cookie));
+    tree->SetMinSize(wxSize(tree->GetBestSize().GetWidth() * 9 / 8, wxDefaultCoord));
 #else
     if ( !pageSet || !m_book->GetCurrentPage() )
     {
@@ -1300,6 +1315,25 @@ void WidgetsFrame::OnSetHint(wxCommandEvent& WXUNUSED(event))
     }
 }
 
+void WidgetsFrame::OnTheme(wxCommandEvent& event)
+{
+    wxApp::Appearance appearance;
+    switch ( event.GetId() )
+    {
+        case Theme_Dark:
+            appearance = wxApp::Appearance::Dark;
+            break;
+        case Theme_Light:
+            appearance = wxApp::Appearance::Light;
+            break;
+        default:
+            appearance = wxApp::Appearance::System;
+            break;
+    }
+    if ( wxTheApp->SetAppearance(appearance) == wxApp::AppearanceResult::Failure)
+        wxLogMessage("SetAppearance: failure");
+}
+
 #endif // wxUSE_MENUS
 
 // ----------------------------------------------------------------------------
@@ -1363,16 +1397,57 @@ WidgetsPageInfo::WidgetsPageInfo(Constructor ctor, const wxString& label, int ca
 // WidgetsPage
 // ----------------------------------------------------------------------------
 
+namespace
+{
+    class FixedSizeImpl : public wxBitmapBundleImpl
+    {
+    public:
+        FixedSizeImpl(const wxSize& sizeDef, const wxImage& img)
+            : m_sizeDef(sizeDef)
+            , m_image(img)
+        {
+        }
+
+        wxSize GetDefaultSize() const override
+        {
+            return m_sizeDef;
+        }
+
+        wxSize GetPreferredBitmapSizeAtScale(double scale) const override
+        {
+            return m_sizeDef * scale;
+        }
+
+        wxBitmap GetBitmap(const wxSize& size) override
+        {
+            wxBitmap bmp(m_image);
+            if (size != bmp.GetSize())
+                wxBitmap::Rescale(bmp, size);
+
+            return bmp;
+        }
+
+    private:
+        const wxSize m_sizeDef;
+        const wxImage m_image;
+    };
+} // anonymous namespace
+
 WidgetsPageInfo *WidgetsPage::ms_widgetPages = nullptr;
 
 WidgetsPage::WidgetsPage(WidgetsBookCtrl *book,
-                         wxImageList *imaglist,
+                         wxVector<wxBitmapBundle>& imaglist,
                          const char *const icon[])
            : wxScrolledWindow(book, wxID_ANY,
                      wxDefaultPosition, wxDefaultSize,
                      wxCLIP_CHILDREN | wxTAB_TRAVERSAL)
 {
-    imaglist->Add(wxBitmap(wxImage(icon).Scale(ICON_SIZE, ICON_SIZE)));
+    imaglist.push_back(CreateBitmapBundle(icon));
+}
+
+wxBitmapBundle WidgetsPage::CreateBitmapBundle(const char* const icon[])
+{
+    return wxBitmapBundle::FromImpl(new FixedSizeImpl(wxSize(16, 16), wxImage(icon)));
 }
 
 /* static */
@@ -1439,7 +1514,7 @@ wxSizer *WidgetsPage::CreateSizerWithText(wxControl *control,
     wxTextCtrl *text = new wxTextCtrl(control->GetParent(), id, wxEmptyString,
         wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
 
-    sizerRow->Add(control, wxSizerFlags(0).Border(wxRIGHT).CentreVertical());
+    sizerRow->Add(control, wxSizerFlags().Border(wxRIGHT).CentreVertical());
     sizerRow->Add(text, wxSizerFlags(1).Border(wxLEFT).CentreVertical());
 
     if ( ppText )
@@ -1475,7 +1550,7 @@ wxCheckBox *WidgetsPage::CreateCheckBoxAndAddToSizer(wxSizer *sizer,
 {
     wxCheckBox *checkbox = new wxCheckBox(statBoxParent ? statBoxParent: this, id, label);
     sizer->Add(checkbox, wxSizerFlags().HorzBorder());
-    sizer->AddSpacer(2);
+    sizer->AddSpacer(FromDIP(2));
 
     return checkbox;
 }

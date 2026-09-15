@@ -44,6 +44,7 @@
 #include "wx/msw/private.h"
 #include "wx/msw/dc.h"
 #include "wx/msw/uxtheme.h"
+#include "wx/msw/private/dc.h"
 
 // ---------------------------------------------------------------------------
 // macro
@@ -51,78 +52,6 @@
 
 // hide the ugly cast
 #define GetHMenuOf(menu)    ((HMENU)menu->GetHMenu())
-
-// ----------------------------------------------------------------------------
-// helper classes for temporarily changing HDC parameters
-// ----------------------------------------------------------------------------
-
-namespace
-{
-
-// This class just stores an HDC.
-class HDCHandler
-{
-protected:
-    HDCHandler(HDC hdc) : m_hdc(hdc) { }
-
-    const HDC m_hdc;
-};
-
-class HDCTextColChanger : HDCHandler
-{
-public:
-    HDCTextColChanger(HDC hdc, COLORREF col)
-        : HDCHandler(hdc),
-          m_colOld(::SetTextColor(hdc, col))
-    {
-    }
-
-    ~HDCTextColChanger()
-    {
-        ::SetTextColor(m_hdc, m_colOld);
-    }
-
-private:
-    COLORREF m_colOld;
-};
-
-class HDCBgColChanger : HDCHandler
-{
-public:
-    HDCBgColChanger(HDC hdc, COLORREF col)
-        : HDCHandler(hdc),
-          m_colOld(::SetBkColor(hdc, col))
-    {
-    }
-
-    ~HDCBgColChanger()
-    {
-        ::SetBkColor(m_hdc, m_colOld);
-    }
-
-private:
-    COLORREF m_colOld;
-};
-
-class HDCBgModeChanger : HDCHandler
-{
-public:
-    HDCBgModeChanger(HDC hdc, int mode)
-        : HDCHandler(hdc),
-          m_modeOld(::SetBkMode(hdc, mode))
-    {
-    }
-
-    ~HDCBgModeChanger()
-    {
-        ::SetBkMode(m_hdc, m_modeOld);
-    }
-
-private:
-    int m_modeOld;
-};
-
-} // anonymous namespace
 
 // ============================================================================
 // implementation
@@ -134,6 +63,8 @@ private:
 #include "wx/msw/private/metrics.h"
 
 #endif // wxUSE_OWNER_DRAWN
+
+#include "wx/msw/private/darkmode.h"
 
 // ----------------------------------------------------------------------------
 // dynamic classes implementation
@@ -156,9 +87,7 @@ public:
     // Wrapper around standard MARGINS structure providing some helper
     // functions and automatically initializing the margin fields to 0.
     struct Margins
-#if wxUSE_UXTHEME
         : MARGINS
-#endif // wxUSE_UXTHEME
     {
         Margins()
         {
@@ -175,7 +104,7 @@ public:
         {
             rect.top += cyTopHeight;
             rect.left += cxLeftWidth;
-            rect.right -= cyTopHeight;
+            rect.right -= cxRightWidth;
             rect.bottom -= cyBottomHeight;
         }
 
@@ -183,15 +112,9 @@ public:
         {
             rect.top -= cyTopHeight;
             rect.left -= cxLeftWidth;
-            rect.right += cyTopHeight;
+            rect.right += cxRightWidth;
             rect.bottom += cyBottomHeight;
         }
-
-#if !wxUSE_UXTHEME
-        // When MARGINS struct is not available, we need to define the fields
-        // we use ourselves.
-        int cxLeftWidth, cxRightWidth, cyTopHeight, cyBottomHeight;
-#endif // !wxUSE_UXTHEME
     };
 
     Margins ItemMargin;         // popup item margins
@@ -239,14 +162,12 @@ public:
             ms_instance = &s_menuData;
         }
 
-    #if wxUSE_UXTHEME
         bool theme = MenuLayout() == FullTheme;
         if ( ms_instance->Theme != theme )
         {
             ms_instance->Init(window);
         }
         else
-    #endif // wxUSE_UXTHEME
         {
             if ( ms_instance->dpi != window->GetDPI().y )
             {
@@ -267,10 +188,8 @@ public:
     // are not available or not supported on menu
     static bool IsUxThemeActive()
     {
-    #if wxUSE_UXTHEME
         if ( MenuLayout() == FullTheme )
             return true;
-    #endif // wxUSE_UXTHEME
         return false;
     }
 
@@ -284,10 +203,8 @@ public:
     static MenuLayoutType MenuLayout()
     {
         MenuLayoutType menu = Classic;
-    #if wxUSE_UXTHEME
         if ( wxUxThemeIsActive() )
             menu = FullTheme;
-    #endif // wxUSE_UXTHEME
         return menu;
     }
 
@@ -301,7 +218,6 @@ MenuDrawData* MenuDrawData::ms_instance = nullptr;
 
 void MenuDrawData::Init(wxWindow const* window)
 {
-#if wxUSE_UXTHEME
     if ( IsUxThemeActive() )
     {
         wxUxThemeHandle hTheme(window, L"MENU");
@@ -357,7 +273,6 @@ void MenuDrawData::Init(wxWindow const* window)
             SeparatorMargin.cyTopHeight -= 2;
     }
     else
-#endif // wxUSE_UXTHEME
     {
         const NONCLIENTMETRICS& metrics = wxMSWImpl::GetNonClientMetrics(window);
 
@@ -663,7 +578,7 @@ void wxMenuItem::SetItemLabel(const wxString& txt)
 
 wxBitmap wxMenuItem::GetBitmap(bool bChecked) const
 {
-    wxBitmap bmp = GetBitmapFromBundle(bChecked ? m_bitmap : m_bmpUnchecked);
+    wxBitmap bmp = GetBitmapFromBundle(GetBitmapBundle(bChecked));
 #if wxUSE_IMAGE
     if ( bmp.IsOk() )
     {
@@ -733,12 +648,14 @@ void wxMenuItem::DoSetBitmap(const wxBitmapBundle& bmpNew, bool bChecked)
 
 void wxMenuItem::SetupBitmaps()
 {
+#if wxUSE_OWNER_DRAWN
     // Owner-drawn items must not return valid bitmaps even if they have them,
     // this somehow breaks the item measuring logic and the menu may not become
     // wide enough to accommodate the items text, so just don't do anything at
     // all for them here.
     if ( IsOwnerDrawn() )
         return;
+#endif // wxUSE_OWNER_DRAWN
 
     const int itemPos = MSGetMenuItemPos();
     if ( itemPos == -1 )
@@ -891,8 +808,7 @@ bool wxMenuItem::OnDrawItem(wxDC& dc, const wxRect& rc,
 {
     const MenuDrawData* data = MenuDrawData::Get(GetMenu());
 
-    wxMSWDCImpl *impl = (wxMSWDCImpl*) dc.GetImpl();
-    HDC hdc = GetHdcOf(*impl);
+    HDC hdc = dc.GetHDC();
 
     RECT rect;
     wxCopyRectToRECT(rc, rect);
@@ -932,7 +848,6 @@ bool wxMenuItem::OnDrawItem(wxDC& dc, const wxRect& rc,
         if ( data->MenuLayout() != MenuDrawData::FullTheme )
             rcText.top--;
 
-#if wxUSE_UXTHEME
         // If a custom background colour is explicitly specified, we should use
         // it instead of the default theme background.
         if ( !GetBackgroundColour().IsOk() && MenuDrawData::IsUxThemeActive() )
@@ -952,27 +867,99 @@ bool wxMenuItem::OnDrawItem(wxDC& dc, const wxRect& rc,
                 state = MPI_NORMAL;
             }
 
-            wxUxThemeHandle hTheme(GetMenu()->GetWindow(), L"MENU");
+            // To get a proper dark mode appearance, we need to combine
+            // multiple themes:
+            //
+            // The DarkMode::Menu theme only defines MENU_POPUPBACKGROUND,
+            // MENU_POPUPSUBMENU, and MENU_POPUPGUTTER parts.
+            //
+            // The DarkMode_ImmersiveStart::Menu theme, on the other hand, only
+            // defines MENU_POPUPITEM (used for the rounded selection
+            // background).
+            //
+            // Because no single theme provides all required menu parts,
+            // multiple theme classes must be chained using ';' so missing
+            // parts can fall back to another theme.
+            //
+            // On older Windows versions, this fallback must be specified
+            // explicitly. On newer Windows 11 builds (25H2+), the system
+            // automatically falls back to the base Menu class if a subclass is
+            // not found.
+            //
+            // Finally: MENU_POPUPITEM is taken from DarkMode_ImmersiveStart,
+            // while remaining menu parts (background, submenu, gutter,
+            // separator) are drawn from DarkMode::Menu or the base MENU class
+            // to ensure a consistent dark-mode appearance.
+            wxUxThemeHandle hDarkTheme =
+                wxUxThemeHandle::NewAtStdDPI(L"DarkMode::Menu");
+            wxUxThemeHandle hTheme
+                (
+                    GetMenu()->GetWindow(),
+                    L"LightMode_ImmersiveStart::Menu;Menu",
+                    L"DarkMode_ImmersiveStart::Menu;DarkMode::Menu;MENU"
+                );
+
+            const bool isDark = wxMSWDarkMode::IsActive();
+
+            auto drawMenuThemePart = [&](const RECT& r, int part, int state = 0)
+                {
+                    if ( isDark )
+                    {
+                        switch ( part )
+                        {
+                            // Parts provided by DarkMode::Menu
+                            case MENU_POPUPBACKGROUND:
+                            case MENU_POPUPSUBMENU:
+                            case MENU_POPUPGUTTER:
+                                hDarkTheme.DrawBackground(hdc, r, part, state);
+                                return;
+                        }
+                    }
+
+                    // Fallback to the light theme for missing parts or when
+                    // dark mode is not active.
+                    hTheme.DrawBackground(hdc, r, part, state);
+                };
 
             if ( ::IsThemeBackgroundPartiallyTransparent(hTheme,
                     MENU_POPUPITEM, state) )
             {
-                hTheme.DrawBackground(hdc, rect, MENU_POPUPBACKGROUND);
+                drawMenuThemePart(rect, MENU_POPUPBACKGROUND);
             }
 
-            hTheme.DrawBackground(hdc, rcGutter, MENU_POPUPGUTTER);
+            drawMenuThemePart(rcGutter, MENU_POPUPGUTTER);
 
             if ( IsSeparator() )
             {
                 rcSeparator.left = rcGutter.right;
-                hTheme.DrawBackground(hdc, rcSeparator, MENU_POPUPSEPARATOR);
+                drawMenuThemePart(rcSeparator, MENU_POPUPSEPARATOR);
                 return true;
             }
 
-            hTheme.DrawBackground(hdc, rcSelection, MENU_POPUPITEM, state);
+            drawMenuThemePart(rcSelection, MENU_POPUPITEM, state);
+
+            // We also need to draw the menu arrow for sub menus in dark mode.
+            if ( isDark && GetSubMenu() )
+            {
+                const int glyphState =
+                    stat & wxODDisabled ? MSM_DISABLED : MSM_NORMAL;
+
+                const SIZE szArrow = data->ArrowSize;
+                RECT rcArrow;
+                rcArrow.right = rcSelection.right - data->ArrowMargin.cxRightWidth;
+                rcArrow.left = rcArrow.right - szArrow.cx;
+                rcArrow.top = rcSelection.top +
+                    ((rcSelection.bottom - rcSelection.top) - szArrow.cy) / 2;
+                rcArrow.bottom = rcArrow.top + szArrow.cy;
+                drawMenuThemePart(rcArrow, MENU_POPUPSUBMENU, glyphState);
+
+                // Prevent Windows from drawing its default arrow over ours.
+                ::ExcludeClipRect(hdc,
+                                  rcArrow.left, rcArrow.top,
+                                  rcArrow.right, rcArrow.bottom);
+            }
         }
         else
-#endif // wxUSE_UXTHEME
         {
             if ( IsSeparator() )
             {
@@ -989,9 +976,8 @@ bool wxMenuItem::OnDrawItem(wxDC& dc, const wxRect& rc,
         // draw text label
         // using native API because it recognizes '&'
 
-        HDCTextColChanger changeTextCol(hdc, colText.GetPixel());
-        HDCBgColChanger changeBgCol(hdc, colBack.GetPixel());
-        HDCBgModeChanger changeBgMode(hdc, TRANSPARENT);
+        wxMSWImpl::wxTextColoursChanger textCol(hdc, colText, colBack);
+        wxMSWImpl::wxBkModeChanger bkMode(hdc, wxBRUSHSTYLE_TRANSPARENT);
 
         SelectInHDC selFont(hdc, GetHfontOf(font));
 
@@ -1098,9 +1084,7 @@ bool wxMenuItem::OnDrawItem(wxDC& dc, const wxRect& rc,
             {
                 // we need to grey out the bitmap as we don't have any specific
                 // disabled bitmap
-                wxImage imgGrey = bmp.ConvertToImage().ConvertToGreyscale();
-                if ( imgGrey.IsOk() )
-                    bmp = wxBitmap(imgGrey);
+                wxBitmap::MakeDisabled(bmp);
             }
 #endif // wxUSE_IMAGE
         }
@@ -1128,32 +1112,30 @@ namespace
 {
 
 // helper function for draw coloured check mark
-void DrawColorCheckMark(HDC hdc, int x, int y, int cx, int cy, HDC hdcCheckMask, int idxColor)
+void DrawColorCheckMark(HDC hdc, int x, int y, int cx, int cy, HDC hdcCheckMask, wxSystemColour color)
 {
-    const COLORREF colBlack = RGB(0, 0, 0);
-    const COLORREF colWhite = RGB(255, 255, 255);
-
-    HDCTextColChanger changeTextCol(hdc, colBlack);
-    HDCBgColChanger changeBgCol(hdc, colWhite);
-    HDCBgModeChanger changeBgMode(hdc, TRANSPARENT);
+    wxMSWImpl::wxTextColoursChanger textCol(hdc, *wxBLACK, *wxWHITE);
+    wxMSWImpl::wxBkModeChanger bkMode(hdc, wxBRUSHSTYLE_TRANSPARENT);
 
     // memory DC for color bitmap
     MemoryHDC hdcMem(hdc);
     CompatibleBitmap hbmpMem(hdc, cx, cy);
     SelectInHDC selMem(hdcMem, hbmpMem);
 
+    const wxColour colCheck = wxSystemSettings::GetColour(color);
+    AutoHBRUSH hbr(colCheck.GetPixel());
+    SelectInHDC selBrush(hdcMem, hbr);
     RECT rect = { 0, 0, cx, cy };
-    ::FillRect(hdcMem, &rect, ::GetSysColorBrush(idxColor));
+    ::FillRect(hdcMem, &rect, hbr);
 
-    const COLORREF colCheck = ::GetSysColor(idxColor);
-    if ( colCheck == colWhite )
+    if ( colCheck == *wxWHITE )
     {
         ::BitBlt(hdc, x, y, cx, cy, hdcCheckMask, 0, 0, MERGEPAINT);
         ::BitBlt(hdc, x, y, cx, cy, hdcMem, 0, 0, SRCAND);
     }
     else
     {
-        if ( colCheck != colBlack )
+        if ( colCheck != *wxBLACK )
         {
             const DWORD ROP_DSna = 0x00220326;  // dest = (NOT src) AND dest
             ::BitBlt(hdcMem, 0, 0, cx, cy, hdcCheckMask, 0, 0, ROP_DSna);
@@ -1166,14 +1148,11 @@ void DrawColorCheckMark(HDC hdc, int x, int y, int cx, int cy, HDC hdcCheckMask,
 
 } // anonymous namespace
 
-void wxMenuItem::DrawStdCheckMark(WXHDC hdc_, const RECT* rc, wxODStatus stat)
+void wxMenuItem::DrawStdCheckMark(WXHDC hdc, const tagRECT* rc, wxODStatus stat)
 {
-    HDC hdc = (HDC)hdc_;
-
-#if wxUSE_UXTHEME
     if ( MenuDrawData::IsUxThemeActive() )
     {
-        wxUxThemeHandle hTheme(GetMenu()->GetWindow(), L"MENU");
+        wxUxThemeHandle hTheme(GetMenu()->GetWindow(), L"MENU" , L"DARKMODE::MENU");
 
         const MenuDrawData* data = MenuDrawData::Get(GetMenu());
 
@@ -1202,7 +1181,6 @@ void wxMenuItem::DrawStdCheckMark(WXHDC hdc_, const RECT* rc, wxODStatus stat)
         hTheme.DrawBackground(hdc, *rc, MENU_POPUPCHECK, stateCheck);
     }
     else
-#endif // wxUSE_UXTHEME
     {
         int cx = rc->right - rc->left;
         int cy = rc->bottom - rc->top;
@@ -1222,15 +1200,15 @@ void wxMenuItem::DrawStdCheckMark(WXHDC hdc_, const RECT* rc, wxODStatus stat)
         if ( (stat & wxODDisabled) && !(stat & wxODSelected) )
         {
             DrawColorCheckMark(hdc, rc->left + 1, rc->top + 1,
-                               cx, cy, hdcMask, COLOR_3DHILIGHT);
+                               cx, cy, hdcMask, wxSYS_COLOUR_3DHILIGHT);
         }
 
         // then draw a check mark
-        int color = COLOR_MENUTEXT;
+        wxSystemColour color = wxSYS_COLOUR_MENUTEXT;
         if ( stat & wxODDisabled )
-            color = COLOR_BTNSHADOW;
+            color = wxSYS_COLOUR_BTNSHADOW;
         else if ( stat & wxODSelected )
-            color = COLOR_HIGHLIGHTTEXT;
+            color = wxSYS_COLOUR_HIGHLIGHTTEXT;
 
         DrawColorCheckMark(hdc, rc->left, rc->top, cx, cy, hdcMask, color);
     }
@@ -1246,10 +1224,9 @@ void wxMenuItem::GetFontToUse(wxFont& font) const
 
 void wxMenuItem::GetColourToUse(wxODStatus stat, wxColour& colText, wxColour& colBack) const
 {
-#if wxUSE_UXTHEME
     if ( MenuDrawData::IsUxThemeActive() )
     {
-        wxUxThemeHandle hTheme(GetMenu()->GetWindow(), L"MENU");
+        wxUxThemeHandle hTheme(GetMenu()->GetWindow(), L"MENU", L"DARKMODE::MENU");
 
         if ( stat & wxODDisabled)
         {
@@ -1259,7 +1236,18 @@ void wxMenuItem::GetColourToUse(wxODStatus stat, wxColour& colText, wxColour& co
         {
             colText = GetTextColour();
             if ( !colText.IsOk() )
-                wxRGBToColour(colText, ::GetThemeSysColor(hTheme, COLOR_MENUTEXT));
+            {
+                if ( wxMSWDarkMode::IsActive() )
+                {
+                    colText = hTheme.GetColour(MENU_POPUPITEM, TMT_TEXTCOLOR, MPI_NORMAL);
+                    if ( !colText.IsOk() )
+                        colText = wxSystemSettings::GetColour(wxSYS_COLOUR_MENUTEXT);
+                }
+                else
+                {
+                    wxRGBToColour(colText, ::GetThemeSysColor(hTheme, COLOR_MENUTEXT));
+                }
+            }
         }
 
         if ( stat & wxODSelected )
@@ -1274,7 +1262,6 @@ void wxMenuItem::GetColourToUse(wxODStatus stat, wxColour& colText, wxColour& co
         }
     }
     else
-#endif // wxUSE_UXTHEME
     {
         wxOwnerDrawn::GetColourToUse(stat, colText, colBack);
     }

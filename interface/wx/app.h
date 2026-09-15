@@ -9,8 +9,7 @@
 /**
     @class wxAppConsole
 
-    This class is essential for writing console-only or hybrid apps without
-    having to define @c wxUSE_GUI=0.
+    This class us used instead of wxApp for console applications.
 
     It is used to:
     @li set and get application-wide properties (see wxAppConsole::CreateTraits
@@ -30,6 +29,8 @@
     Use wxDECLARE_APP(appClass) in a header file if you want the ::wxGetApp() function
     (which returns a reference to your application object) to be visible to other
     files.
+
+    Note that setting @c wxUSE_GUI=0 makes wxApp identical to this class.
 
     @library{wxbase}
     @category{appmanagement}
@@ -363,6 +364,9 @@ public:
 
         The return value of this function is currently ignored, return the same
         value as returned by the base class method if you override it.
+
+        NOTE: The base class method performs some cleanup - call it at the end
+        of your method if you override it.
     */
     virtual int OnExit();
 
@@ -513,18 +517,38 @@ public:
 
         Any unhandled exceptions thrown from (overridden versions of) OnInit()
         and OnExit() methods as well as any exceptions thrown from inside the
-        main loop and re-thrown by OnUnhandledException() will result in a call
+        main loop and re-thrown by OnExceptionInMainLoop() will result in a call
         to this function.
 
         By the time this function is called, the program is already about to
         exit and the exception can't be handled nor ignored any more, override
-        OnUnhandledException() or use explicit @c try/catch blocks around
+        OnExceptionInMainLoop() or use explicit @c try/catch blocks around
         OnInit() body to be able to handle the exception earlier.
 
         The default implementation dumps information about the exception using
         wxMessageOutputBest.
+
+        @note This function should _not_ throw any exceptions itself.
     */
     virtual void OnUnhandledException();
+
+    /**
+        Call OnUnhandledException() on the current wxTheApp object if it exists.
+
+        This function is used by wxWidgets itself and is usually not meant to
+        be called by the application code. If you do call it, it must be done
+        from a `catch` clause of a `try` block, i.e. there must be a currently
+        handled exception.
+
+        The function checks if ::wxTheApp is not @NULL and if it is, calls
+        OnUnhandledException() on it.
+
+        Additionally, if this call results in an exception, it is caught and
+        wxAppConsole::OnUnhandledException() is called.
+
+        @since 3.3.0
+     */
+    static void CallOnUnhandledException();
 
     /**
         Method to store exceptions not handled by OnExceptionInMainLoop().
@@ -735,8 +759,53 @@ public:
     void SetAppName(const wxString& name);
 
     /**
-        Sets the class name of the application. This may be used in a platform specific
-        manner to refer to the application.
+        Sets the class name of the application.
+
+        The class name is used in a platform specific manner. Currently it is
+        used as "Application User Model ID" under Windows (see [Microsoft
+        documentation][microsoft-docs]), "app ID" when using wxGTK 3.24.22 or
+        later with Wayland (see [Wayland documentation][wayland-docs]) and is
+        unused under the other platforms.
+
+        [microsoft-docs]: https://learn.microsoft.com/en-us/windows/win32/shell/appids
+        [wayland-docs]: https://wayland.app/protocols/xdg-shell#xdg_toplevel:request:set_app_id
+
+        When it is used, the class name purpose is to allow the system to
+        handle all windows with the same ID as belonging to the same
+        application, e.g. to group them together in the taskbar (so the value
+        set here is used by wxTaskBarJumpList constructor). By default the
+        application executable name is used as its ID, so it is not necessary
+        to set the class name, but it may be useful to do it to specify a more
+        unique string (typically by using a reverse domain name notation with
+        the domain unique to the application vendor) or by specifying the same
+        ID in different applications that should be handled as a single one at
+        UI level.
+
+        @note Under Windows setting the application user model ID changes some
+        functionality available by default, notably Shift middle clicking the
+        application icon in the taskbar doesn't open a new instance of the
+        application any more and most recently used files list maintained by
+        the shell doesn't work any longer. Application that need to keep this
+        working need to use `SHGetPropertyStoreForWindow()` and
+        `SHAddToRecentDocs()` functions to provide the necessary support for it.
+
+        Please note that SetClassName() must be called as early as possible and
+        definitely before creating any top-level windows to have an effect.
+        Typically it should be called in the constructor of the class derived
+        from wxApp, e.g.
+
+        @code
+        class MyApp : public wxApp
+        {
+        public:
+            MyApp() {
+                // Constructor shouldn't perform any non-trivial initialization
+                // as the GUI is not available yet, but this function is fine
+                // to call.
+                SetClassName("com.example.myapp");
+            }
+        };
+        @endcode
 
         @see GetClassName()
     */
@@ -1079,7 +1148,7 @@ public:
     {
         Failure,     ///< Changing the appearance failed.
         Ok,          ///< Appearance was successfully changed.
-        CannotChange ///< Appearance can't be changed any more.
+        CannotChange ///< Appearance can't be changed any more (currently not used).
     };
 
     /**
@@ -1094,27 +1163,24 @@ public:
         AppearanceResult::Ok, and affects all the existing windows as well
         as any windows created after this call.
 
-        Under MSW, the default appearance is always light and the applications
-        that want to follow the system appearance need to explicitly call this
-        function with Appearance::System parameter in order to do it. Please
-        note using dark appearance under MSW requires using non-documented
-        system functions and has several known limitations, please see
-        MSWEnableDarkMode() for more details. Also, on this platform the
-        appearance can be only set before any windows are created and calling
-        this function too late will return AppearanceResult::CannotChange.
+        Please note that using dark appearance under MSW requires using
+        undocumented system functions and has several known limitations.
+        Therefore, the system dark theme is not followed automatically by
+        default there. See MSWEnableDarkMode() for more details.
 
         Note that to query the current appearance, you can use
         wxSystemAppearance, see wxSystemSettings::GetAppearance().
 
         @return AppearanceResult::Ok if the appearance was successfully
-            changed or had been already set to the requested value,
-            AppearanceResult::CannotChange if the appearance can't be changed
-            any more because it's too late to do it but could be changed if
-            done immediately on next program launch (only returned by wxMSW
-            currently) or AppearanceResult::Failure if changing the appearance
+            changed or had been already set to the requested value;
+            or AppearanceResult::Failure if changing the appearance
             failed for some other reason, e.g. because `GTK_THEME` is defined
-            when using wxGTK of this function is not implemented at all for
-            the current platform.
+            when using wxGTK or if this function is not implemented at all for
+            the current platform. Note that AppearanceResult::CannotChange is
+            currently never returned, but reserved for the future in case the
+            appearance can't be changed any more, e.g. because it can only be
+            done before creating the first window and the application has
+            already done so.
 
         @since 3.3.0
     */
@@ -1347,11 +1413,26 @@ public:
     //@{
 
     /**
-        Enable experimental dark mode support for MSW applications.
+        Possible flags for MSWEnableDarkMode().
+
+        @onlyfor{wxmsw}
+
+        @since 3.3.4
+    */
+    enum DarkMode
+    {
+        DarkMode_Auto   = 0, ///< Use dark mode if the system is using it.
+        DarkMode_Always = 1, ///< Force using dark mode.
+        DarkMode_Never  = 2, ///< Force using light mode.
+    };
+
+    /**
+        Enable unofficial dark mode support for MSW applications.
 
         This function uses @e undocumented, and unsupported by Microsoft,
         functions to enable dark mode support for the desktop applications
-        under Windows 10 20H1 or later (including all Windows 11 versions).
+        under Windows 10 versions later than v1809 (which includes Windows 10
+        LTSC 2019) and all Windows 11 versions.
 
         Note that dark mode can also be enabled by setting the "msw.dark-mode"
         @ref wxSystemOptions "system option" via an environment variable from
@@ -1360,25 +1441,15 @@ public:
 
         Known limitations of dark mode support include:
 
-        - Anything based on `TaskDialog()` Win32 API doesn't support dark mode:
-          wxMessageBox(), wxMessageDialog, wxRichMessageDialog, wxProgressDialog
-          and simple (i.e., without hyperlink or licence) wxAboutBox(). Consider
-          using generic versions (e.g. wxGenericMessageDialog or wxGenericProgressDialog)
-          if dark mode support is more important than using the native dialog.
-        - The following dialogs wrapping common windows dialogs don't support
-          dark mode: wxColourDialog, wxFindReplaceDialog, wxFontDialog,
-          wxPageSetupDialog, wxPrintDialog.
-        - wxDatePickerCtrl and wxTimePickerCtrl don't support dark mode and
-          use the same (light) background as by default in it.
-        - Toolbar items for which wxToolBar::SetDropdownMenu() was called
-          don't draw the menu drop-down correctly, making it almost
-          invisible.
-        - Calling wxMenu::Break() will result in the menu being light.
+        - wxTimePickerCtrl, wxDatePickerCtrl and wxCalendarCtrl don't support dark mode
+          and use the same (light) background as by default in it.
+        - wxPrintDialog on Windows 10 doesn't support dark mode.
 
-        @param flags Can include @c wxApp::DarkMode_Always to force enabling
-            dark mode for the application, even if the system doesn't use the
-            dark mode by default. Otherwise dark mode is only used if it is the
-            default mode for the applications on the current system.
+        @param flags Can be @c wxApp::DarkMode_Always to force dark mode
+            regardless of the system mode, @c wxApp::DarkMode_Never to likewise
+            force light mode, or @c wxApp::DarkMode_Auto to follow the system
+            mode. The constant @c wxApp::DarkMode_Never is available since
+            wxWidgets 3.3.4.
         @param settings If specified, allows to customize dark mode appearance.
             Please see wxDarkModeSettings documentation for more information.
 
@@ -1390,7 +1461,7 @@ public:
         @since 3.3.0
      */
     bool
-    MSWEnableDarkMode(int flags = 0, wxDarkModeSettings* settings = nullptr);
+    MSWEnableDarkMode(DarkMode flags = 0, wxDarkModeSettings* settings = nullptr);
 
     //@}
 };
@@ -1423,6 +1494,24 @@ public:
 #define wxDECLARE_APP( className )
 
 /**
+    This macro and tells wxWidgets which application class should be used.
+
+    Unlike the more usual wxIMPLEMENT_APP() macro, this macro does not define
+    the entry point of the application, i.e. doesn't define @c main() or
+    @c WinMain() function, so you need to implement it separately when using
+    it.
+
+    The @a className passed to this macro must be a name of a default
+    constructible class deriving from wxApp that will be instantiated by
+    wxWidgets during its initialization.
+
+    Note that this macro requires a final semicolon.
+
+    @header{wx/app.h}
+ */
+#define wxIMPLEMENT_APP_NO_MAIN( className )
+
+/**
     This macro defines the application entry point and tells wxWidgets which
     application class should be used.
 
@@ -1431,8 +1520,9 @@ public:
     typical GUI application it's simpler and more convenient to use this macro
     to do both together.
 
-    The @a className passed to this macro must be a name of the class deriving
-    from wxApp.
+    The @a className passed to this macro must be a name of a default
+    constructible class deriving from wxApp that will be instantiated by
+    wxWidgets during its initialization.
 
     Note that this macro requires a final semicolon.
 

@@ -50,6 +50,7 @@
 #include <windowsx.h>
 
 #include "wx/msw/private.h"
+#include "wx/msw/private/darkmode.h"
 #include "wx/msw/winundef.h"
 
 #include <string.h>
@@ -349,6 +350,17 @@ private:
 
 namespace
 {
+struct InsertTextData
+{
+    // VS14.0 refuses to compile code that uses initializer list to create objects
+    // of this struct: InsertTextData{_somevalue_}; // VS14.0 rejects this
+    explicit InsertTextData(unsigned long len) : lenOfInsertedText(len)
+    {
+    }
+
+    unsigned long lenOfInsertedText = 0;
+    unsigned long oldMaximumLength = 0;
+};
 
 // This stack stores the length of the text being currently inserted into the
 // current control.
@@ -358,7 +370,7 @@ namespace
 // time (but possibly more than into one, if wxEVT_TEXT event handler does
 // something that results in another text control update), and we don't want to
 // waste space in every wxTextCtrl object for this field unnecessarily.
-wxStack<int> gs_lenOfInsertedText;
+wxStack<InsertTextData> gs_insertTextData;
 
 } // anonymous namespace
 
@@ -462,9 +474,10 @@ bool wxTextCtrl::Create(wxWindow *parent,
     if ( !MSWCreateText(value, pos, size) )
         return false;
 
-#if wxUSE_DRAG_AND_DROP && wxUSE_RICHEDIT
+#if wxUSE_RICHEDIT
     if ( IsRich() )
     {
+#if wxUSE_DRAG_AND_DROP
         // rich text controls have a default associated drop target which
         // allows them to receive (rich) text dropped on them, which is nice,
         // but prevents us from associating a user-defined drop target with
@@ -473,8 +486,9 @@ bool wxTextCtrl::Create(wxWindow *parent,
         // to make it work, we set m_dropTarget to this special value initially
         // and check for it in our SetDropTarget()
         m_dropTarget = wxRICHTEXT_DEFAULT_DROPTARGET;
+#endif // wxUSE_DRAG_AND_DROP
     }
-#endif // wxUSE_DRAG_AND_DROP && wxUSE_RICHEDIT
+#endif // wxUSE_RICHEDIT
 
     return true;
 }
@@ -482,17 +496,14 @@ bool wxTextCtrl::Create(wxWindow *parent,
 // returns true if the platform should explicitly apply a theme border
 bool wxTextCtrl::CanApplyThemeBorder() const
 {
-    // Standard text control already handles theming
-    return ((GetWindowStyle() & (wxTE_RICH|wxTE_RICH2)) != 0);
+    // Standard text control already handles theming.
+    return IsRich();
 }
 
 bool wxTextCtrl::MSWCreateText(const wxString& value,
                                const wxPoint& pos,
                                const wxSize& size)
 {
-    // translate wxWin style flags to MSW ones
-    WXDWORD msStyle = MSWGetCreateWindowFlags();
-
     // do create the control - either an EDIT or RICHEDIT
     wxString windowClass = wxT("EDIT");
 
@@ -613,7 +624,7 @@ bool wxTextCtrl::MSWCreateText(const wxString& value,
     // implementation detail
     m_updatesCount = -2;
 
-    if ( !MSWCreateControl(windowClass.t_str(), msStyle, pos, size, valueWin) )
+    if ( !MSWCreateControl(windowClass.t_str(), valueWin, pos, size) )
     {
         // There is one case in which window creation may realistically fail
         // and this is when we create a plain EDIT control with too long text,
@@ -712,12 +723,7 @@ bool wxTextCtrl::MSWCreateText(const wxString& value,
         // non-rich read-only multiline controls have grey background by
         // default under MSW but this is not always appropriate, so forcefully
         // reset the background colour to normal default
-        //
-        // this is not ideal but, after a long discussion on wx-dev (see
-        // http://thread.gmane.org/gmane.comp.lib.wxwidgets.devel/116360/) it
-        // was finally deemed to be the best behaviour by default (and ideally
-        // we'd have a way to change this, see #11521)
-        SetBackgroundColour(GetClassDefaultAttributes().colBg);
+        m_backgroundColour = GetClassDefaultAttributes().colBg;
     }
 
     // Without this, if we pass the size in the constructor and then don't change it,
@@ -1004,7 +1010,7 @@ bool wxTextCtrl::IsEmpty() const
     return wxTextCtrlBase::IsEmpty();
 }
 
-wxString wxTextCtrl::GetValue() const
+wxString wxTextCtrl::DoGetValue() const
 {
     // range 0..-1 is special for GetRange() and means to retrieve all text
     return GetRange(0, -1);
@@ -1064,9 +1070,7 @@ wxString wxTextCtrl::GetRange(long from, long to) const
     else
 #endif // wxUSE_RICHEDIT
     {
-        // retrieve all text: wxTextEntry method works even for multiline
-        // controls and must be used for single line ones to account for hints
-        str = wxTextEntry::GetValue();
+        str = wxTextEntry::DoGetValue();
 
         // need only a range?
         if ( from < to )
@@ -1144,8 +1148,7 @@ wxString wxTextCtrl::GetRTFValue() const
     buffer.reserve(GetLastPosition() * 2);
 
     // Use a EDITSTREAMCALLBACK to stream text out from the control.
-    EDITSTREAM es{ 0 };
-    es.dwError = 0;
+    EDITSTREAM es = { };
     es.pfnCallback = MSWEditStreamOutCallback;
     // our callback will write to a char buffer (i.e., std::string)
     es.dwCookie = reinterpret_cast<DWORD_PTR>(&buffer);
@@ -1174,7 +1177,7 @@ void wxTextCtrl::SetRTFValue(const wxString& val)
 {
     wxCHECK_RET(IsRich(), "RTF support is only available for rich controls!");
 
-    SETTEXTEX textInfo{ 0 };
+    SETTEXTEX textInfo = { };
     textInfo.flags = ST_DEFAULT | ST_UNICODE;
     textInfo.codepage = 1200;
 
@@ -1196,6 +1199,57 @@ void wxTextCtrl::SetRTFValue(const wxString& val)
     }
 
     SetInsertionPoint(0);
+}
+
+wxTextSearchResult wxTextCtrl::SearchText(const wxTextSearch& search) const
+{
+    // set up the flags
+    WPARAM flags = 0;
+    switch ( search.m_direction )
+    {
+        case wxTextSearch::Direction::Down:
+            flags |= FR_DOWN;
+            break;
+
+        case wxTextSearch::Direction::Up:
+            // Nothing to do this is (surprisingly) the default.
+            break;
+    }
+    if (search.m_wholeWord)
+    {
+        flags |= FR_WHOLEWORD;
+    }
+    if (search.m_matchCase)
+    {
+        flags |= FR_MATCHCASE;
+    }
+
+    FINDTEXTEX findText;
+    findText.chrg.cpMin = (search.m_startingPosition != -1) ?
+        // user-provided start
+        search.m_startingPosition :
+        // if going down, then start from 0; otherwise, start from end
+        (search.m_direction == wxTextSearch::Direction::Down) ? 0 : GetLastPosition();
+    if (search.m_direction == wxTextSearch::Direction::Down)
+    {
+        // go to the end of the text
+        findText.chrg.cpMax = -1;
+    }
+    else
+    {
+        // will search from the end (or user-provided position) and go upward
+        // to the start of the text
+        findText.chrg.cpMax = 0;
+    }
+
+    findText.lpstrText = search.m_searchValue.wc_str();
+
+    if (SendMessage(GetHwnd(), EM_FINDTEXTEXW, flags, (LPARAM)&findText) == -1)
+    {
+        return wxTextSearchResult();
+    }
+
+    return wxTextSearchResult{ findText.chrgText.cpMin, findText.chrgText.cpMax };
 }
 
 #endif // wxUSE_RICHEDIT
@@ -1221,7 +1275,24 @@ void wxTextCtrl::DoWriteText(const wxString& value, int flags)
         if ( !m_defaultStyle.IsDefault() )
         {
             long start, end;
-            GetSelection(&start, &end);
+
+            // For the selection style to be taken into account, we must use
+            // EM_REPLACESEL below, WM_SETTEXT ignores the style, so ensure
+            // that we do, selecting all the text if necessary to do the same
+            // thing as WM_SETTEXT would do.
+            if ( !selectionOnly )
+            {
+                start = 0;
+                end = GetLastPosition();
+                SetSelection(start, end); // Select everything.
+
+                selectionOnly = true;
+            }
+            else // We're already only overwriting the selection.
+            {
+                GetSelection(&start, &end);
+            }
+
             SetStyle(start, end, m_defaultStyle);
         }
     }
@@ -1241,17 +1312,19 @@ void wxTextCtrl::DoWriteText(const wxString& value, int flags)
 
     // Remember the length of the text we're inserting so that
     // AdjustSpaceLimit() could adjust the limit to be big enough for it:
-    // and also signal us whether it did it by resetting it to 0.
-    gs_lenOfInsertedText.push(valueDos.length());
+    // and also signal us whether it did it by setting the oldMaximumLength field.
+    // Notice that the cast is needed because length() returns unsigned long long
+    // under x64 systems.
+    gs_insertTextData.push(InsertTextData(static_cast<unsigned long>(valueDos.length())));
 
     ::SendMessage(GetHwnd(), selectionOnly ? EM_REPLACESEL : WM_SETTEXT,
                   // EM_REPLACESEL takes 1 to indicate the operation should be redoable
                   selectionOnly ? 1 : 0, wxMSW_CONV_LPARAM(valueDos));
 
-    const int lenActuallyInserted = gs_lenOfInsertedText.top();
-    gs_lenOfInsertedText.pop();
+    const auto oldMaxLength = gs_insertTextData.top().oldMaximumLength;
+    gs_insertTextData.pop();
 
-    if ( lenActuallyInserted == -1 )
+    if ( oldMaxLength > 0 )
     {
         // Text size limit has been hit and added text has been truncated.
         // But the max length has been increased by the EN_MAXTEXT message
@@ -1262,6 +1335,8 @@ void wxTextCtrl::DoWriteText(const wxString& value, int flags)
 
         ::SendMessage(GetHwnd(), selectionOnly ? EM_REPLACESEL : WM_SETTEXT,
                       selectionOnly ? 1 : 0, wxMSW_CONV_LPARAM(valueDos));
+
+        SetMaxLength(oldMaxLength); // Restore the old max length
     }
 
     if ( !ucf.GotUpdate() && (flags & SetValue_SendEvent) )
@@ -1709,6 +1784,8 @@ wxPoint wxTextCtrl::DoPositionToCoords(long pos) const
         LRESULT rc = ::SendMessage(GetHwnd(), EM_POSFROMCHAR, (WPARAM)&pt, pos);
         if ( rc != -1 )
             return wxPoint(pt.x, pt.y);
+
+        return wxDefaultPosition;
     }
     else
 #endif // wxUSE_RICHEDIT
@@ -1777,8 +1854,6 @@ wxPoint wxTextCtrl::DoPositionToCoords(long pos) const
         return wxPoint(static_cast<short>(LOWORD(rc)),
                         static_cast<short>(HIWORD(rc)));
     }
-
-    return wxDefaultPosition;
 }
 
 
@@ -2520,8 +2595,11 @@ bool wxTextCtrl::HasSpaceLimit(unsigned int *len) const
 bool wxTextCtrl::AdjustSpaceLimit()
 {
     unsigned int limit;
-    if ( HasSpaceLimit(&limit) )
+    if ( HasSpaceLimit(&limit) && gs_insertTextData.empty() )
+    {
+        // Do nothing if the text is entered interactively.
         return false;
+    }
 
     unsigned int len = ::GetWindowTextLength(GetHwnd());
     if ( len >= limit )
@@ -2532,12 +2610,13 @@ bool wxTextCtrl::AdjustSpaceLimit()
         // it too many times make sure that we make it at least big enough to
         // fit all the text we are currently inserting into the control, if
         // we're inserting any, i.e. if we're called from DoWriteText().
-        if ( !gs_lenOfInsertedText.empty() )
+        if ( !gs_insertTextData.empty() )
         {
-            increaseBy = gs_lenOfInsertedText.top();
+            auto& data = gs_insertTextData.top();
+            increaseBy = data.lenOfInsertedText;
 
-            // Indicate to the caller that we increased the limit.
-            gs_lenOfInsertedText.top() = -1;
+            // Save the old max length (will be restored in DoWriteText())
+            data.oldMaximumLength = limit;
         }
         else // Not inserting text, must be text actually typed by user.
         {
@@ -2778,6 +2857,69 @@ void wxTextCtrl::OnSetFocus(wxFocusEvent& event)
     event.Skip();
 }
 
+bool wxTextCtrl::MSWShouldDrawDarkThemeBorder() const
+{
+    // We need to draw the border for rich edit and when we are not using
+    // DarkMode_DarkTheme. The non-rich control draws a good themed border
+    // with DarkMode_DarkTheme.
+    return IsRich() || !wxMSWDarkMode::HasDarkTheme();
+}
+
+void wxTextCtrl::MSWDrawThemeBorder(WXHDC hdc)
+{
+    if ( IsRich() )
+    {
+        // Always draw a simple border.
+        wxTextCtrlBase::MSWDrawThemeBorder(hdc);
+    }
+    else
+    {
+        // Draw a dark mode border similar to how the control looks in light
+        // mode. If the control has the focus, a blue line appears along the
+        // bottom otherwise a light gray line.
+        RECT rect;
+        wxCopyRectToRECT(GetSize(), rect);
+
+        // Colors taken from the Edit control rendered with
+        // DarkMode_DarkTheme, as can be seen with wxFindReplaceDialog.
+        const COLORREF colOuter = 0x383838;
+        const COLORREF colInnerFocus = 0x212121;
+        const COLORREF colInnerNoFocus = 0x2c2c2c;
+        const COLORREF colBottomFocus = 0xffc24c;
+        const COLORREF colBottomNoFocus = 0xa4a4a4;
+        COLORREF colInner;
+        COLORREF colBottom;
+        int thicknessBot;
+        if ( HasFocus() )
+        {
+            colInner = colInnerFocus;
+            colBottom = colBottomFocus;
+            thicknessBot = 2;
+        }
+        else
+        {
+            colInner = colInnerNoFocus;
+            colBottom = colBottomNoFocus;
+            thicknessBot = 1;
+        }
+
+        // Draw outer 1 pixel thick border with a rectangle. The bottom will be
+        // drawn over later.
+        AutoHBRUSH brushBorder(colOuter);
+        ::FrameRect(hdc, &rect, brushBorder);
+        // Draw inner 1 pixel thick rectangle.
+        AutoHBRUSH brushBg(colInner);
+        RECT rcInner = rect;
+        ::InflateRect(&rcInner, -1, -1);
+        ::FrameRect(hdc, &rcInner, brushBg);
+        // Draw 1 or 2 pixel thick bottom line.
+        AutoHBRUSH brushBottom(colBottom);
+        RECT rcBottom = rect;
+        rcBottom.top = rect.bottom - thicknessBot;
+        ::FillRect(hdc, &rcBottom, brushBottom);
+    }
+}
+
 // the rest of the file only deals with the rich edit controls
 #if wxUSE_RICHEDIT
 
@@ -2842,6 +2984,94 @@ void wxTextCtrl::MSWSetRichZoom()
     denom = 100;
     ::SendMessage(GetHWND(), EM_SETZOOM, (WPARAM)num, (LPARAM)denom);
 }
+
+#endif // wxUSE_RICHEDIT
+
+void wxTextCtrl::MSWGetDarkModeSupport(MSWDarkModeSupport& support) const
+{
+    if ( wxMSWDarkMode::HasDarkTheme() )
+        support.themeName = L"DarkMode_DarkTheme";
+    else
+        wxTextCtrlBase::MSWGetDarkModeSupport(support);
+}
+
+void wxTextCtrl::MSWSetDarkOrLightMode(SetMode setmode)
+{
+    wxTextCtrlBase::MSWSetDarkOrLightMode(setmode);
+
+    // Update the background for non-rich read-only multiline, unless there
+    // are custom colours. The foreground is updated by
+    // wxControl::DoMSWControlColor().
+    if ( !IsRich() && HasFlag(wxTE_MULTILINE) && HasFlag(wxTE_READONLY) &&
+        !m_hasBgCol && !m_hasFgCol )
+    {
+        m_backgroundColour = GetClassDefaultAttributes().colBg;
+    }
+
+#if wxUSE_RICHEDIT
+    // The rich edit control does not change colours automatically. We adjust
+    // colours only if no custom colours occur. When we leave the control
+    // as-is, it might update partially and look bad. That is better than
+    // overwriting custom colours. The app user can revert the theme without
+    // losing anything.
+    if ( IsRich() && !UseBgCol() && !UseForegroundColour() )
+    {
+        // True if we need to update the background colour.
+        bool setBackground = false;
+
+        if ( setmode == SetMode::Change )
+        {
+            // Get formatting info for all the text.
+            long sel1, sel2;
+            GetSelection(&sel1, &sel2);
+            DoSetSelection(-1, -1, SetSel_NoScroll);
+            WinStruct<CHARFORMAT> cf;
+            ::SendMessage(m_hWnd, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+            DoSetSelection(sel1, sel2, SetSel_NoScroll);
+
+            // Check if all text has the same colour.
+            if ( cf.dwMask & CFM_COLOR )
+            {
+                // If the text colour has not been set or matches the default,
+                // update it. The theme switch may not have finished so we
+                // compare against both the dark and light mode defaults.
+                const auto col = wxColour(cf.crTextColor);
+                const wxColor defDk = wxMSWDarkMode::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+                const wxColor defLt = wxRGBToColour(GetSysColor(COLOR_WINDOWTEXT));
+                if ( !col.IsOk() || col == defDk || col == defLt )
+                {
+                    // Set the text background color.
+                    wxTextAttr attr;
+                    attr.SetFont(m_font);
+                    attr.SetBackgroundColour(
+                        wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
+                    SetStyle(-1, -1, attr);
+
+                    // Set text colour.
+                    WinStruct<CHARFORMAT> cf2;
+                    cf2.dwMask = CFM_COLOR;
+                    cf2.crTextColor = wxColourToRGB(
+                        wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
+                    ::SendMessage(m_hWnd, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf2);
+
+                    setBackground = true;
+                }
+            }
+        }
+        else
+        {
+            // Upon window creation, all we need to do is set the background.
+            // The text colour was already set during Create().
+            setBackground = true;
+        }
+
+        if (setBackground)
+            ::SendMessage(m_hWnd, EM_SETBKGNDCOLOR, 0, wxColourToRGB(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW)));
+    }
+#endif
+}
+
+#if wxUSE_RICHEDIT
 
 void wxTextCtrl::MSWUpdateFontOnDPIChange(const wxSize& newDPI)
 {
@@ -3041,6 +3271,15 @@ bool wxTextCtrl::SetFont(const wxFont& font)
         // the default font for it.
         wxTextAttr attr;
         attr.SetFont(font);
+
+        // In dark mode we also need to set the colours explicitly, just as we
+        // do for the colours of the control itself in Create().
+        if ( wxMSWDarkMode::IsActive() )
+        {
+            attr.SetTextColour(GetForegroundColour());
+            attr.SetBackgroundColour(GetBackgroundColour());
+        }
+
         SetStyle(-1, -1, attr);
     }
 
@@ -3497,10 +3736,10 @@ bool wxTextCtrl::GetStyle(long position, wxTextAttr& style)
 
     LOGFONT lf;
     lf.lfWidth = 0;
-    lf.lfCharSet = ANSI_CHARSET; // FIXME: how to get correct charset?
+    lf.lfCharSet = (cf.dwMask & CFM_CHARSET) ? cf.bCharSet : DEFAULT_CHARSET;
     lf.lfClipPrecision = 0;
     lf.lfEscapement = 0;
-    wxStrcpy(lf.lfFaceName, cf.szFaceName);
+    wxStrlcpy(lf.lfFaceName, cf.szFaceName, WXSIZEOF(lf.lfFaceName));
 
     //NOTE:  we _MUST_ set each of these values to _something_ since we
     //do not call wxZeroMemory on the LOGFONT lf

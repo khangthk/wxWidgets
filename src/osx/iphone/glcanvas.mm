@@ -20,6 +20,9 @@
 
 #if wxUSE_GLCANVAS
 
+// OpenGLES is deprecated
+#define GLES_SILENCE_DEPRECATION
+
 #include "wx/glcanvas.h"
 
 #ifndef WX_PRECOMP
@@ -48,7 +51,7 @@
 + (void)initialize
 {
     static BOOL initialized = NO;
-    if (!initialized) 
+    if (!initialized)
     {
         initialized = YES;
         wxOSXIPhoneClassAddWXMethods( self );
@@ -62,10 +65,10 @@
 @end
 
 
-WXGLContext WXGLCreateContext( WXGLPixelFormat pixelFormat, WXGLContext shareContext )
+WXGLContext WXGLCreateContext( WXGLPixelFormat /*pixelFormat*/, WXGLContext /*shareContext*/ )
 {
     WXGLContext context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES1];
-    
+
     if ( !context )
         wxFAIL_MSG("NSOpenGLContext creation failed");
     return context ;
@@ -90,15 +93,15 @@ bool WXGLSetCurrentContext(WXGLContext context)
     return true;
 }
 
-void WXGLDestroyPixelFormat( WXGLPixelFormat pixelFormat )
+void WXGLDestroyPixelFormat( WXGLPixelFormat /*pixelFormat*/ )
 {
 }
 
 
-WXGLPixelFormat WXGLChoosePixelFormat(const int *GLAttrs,
-                                      int n1,
-                                      const int *ctxAttrs,
-                                      int n2)
+WXGLPixelFormat WXGLChoosePixelFormat(const int* /*GLAttrs*/,
+                                      int /*n1*/,
+                                      const int* /*ctxAttrs*/,
+                                      int /*n2*/)
 {
     return @"dummy";
 }
@@ -106,7 +109,7 @@ WXGLPixelFormat WXGLChoosePixelFormat(const int *GLAttrs,
 bool wxGLContext::SetCurrent(const wxGLCanvas& win) const
 {
     if ( !m_glContext )
-        return false;  
+        return false;
 
     wxUICustomOpenGLView* v = (wxUICustomOpenGLView*) win.GetPeer()->GetWXWidget();
     if ( v.context != m_glContext ) {
@@ -114,7 +117,7 @@ bool wxGLContext::SetCurrent(const wxGLCanvas& win) const
         [v bindDrawable];
     }
     WXGLSetCurrentContext(m_glContext);
-    
+
     return true;
 }
 

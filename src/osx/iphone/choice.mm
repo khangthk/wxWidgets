@@ -83,6 +83,12 @@
     [self selectRow:v inComponent:0 animated:NO];
 }
 
+- (void) pickerView: (UIPickerView *)pickerView didSelectRow: (NSInteger)row inComponent: (NSInteger)component
+{
+    wxWidgetIPhoneImpl* impl = (wxWidgetIPhoneImpl* ) wxWidgetImpl::FindFromWXWidget( pickerView );
+    wxChoice *choice = (wxChoice*) impl->GetWXPeer();
+    choice->SendSelectionChangedEvent(wxEVT_CHOICE);
+}
 
 
 @end
@@ -97,7 +103,7 @@ public:
         [v setDataSource:v];
     }
 
-    void InsertItem( size_t pos, int itemid, const wxString& text) override
+    void InsertItem( size_t pos, int /*itemid*/, const wxString& text) override
     {
         wxCFStringRef cftext(text);
         [((wxUIPickerView*)m_osxView).rows insertObject:cftext.AsNSString() atIndex:pos];
@@ -119,13 +125,17 @@ public:
         [((wxUIPickerView*)m_osxView).rows replaceObjectAtIndex:pos withObject:cftext.AsNSString()];
     }
 
+    wxInt32 GetValue() const override
+    {
+        return [((wxUIPickerView*)m_osxView) selectedRowInComponent:0 ];
+    }
 private:
 };
 
 wxWidgetImplType* wxWidgetImpl::CreateChoice( wxWindowMac* wxpeer,
                                     wxWindowMac* WXUNUSED(parent),
                                     wxWindowID WXUNUSED(id),
-                                    wxMenu* menu,
+                                    wxMenu* /*menu*/,
                                     const wxPoint& pos,
                                     const wxSize& size,
                                     long WXUNUSED(style),

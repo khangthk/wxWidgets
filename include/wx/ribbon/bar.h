@@ -15,11 +15,18 @@
 #if wxUSE_RIBBON
 
 class WXDLLIMPEXP_FWD_CORE wxImageList;
+class WXDLLIMPEXP_FWD_CORE wxKeyEvent;
+class WXDLLIMPEXP_FWD_CORE wxActivateEvent;
+class WXDLLIMPEXP_FWD_CORE wxWindowDestroyEvent;
+class wxRibbonButtonBar;
+class wxRibbonToolBar;
 
 #include "wx/ribbon/control.h"
 #include "wx/ribbon/page.h"
 
 #include "wx/vector.h"
+
+#include <vector>
 
 enum wxRibbonBarOption
 {
@@ -62,7 +69,9 @@ public:
         , m_page(page)
     {
     }
-    wxEvent *Clone() const override { return new wxRibbonBarEvent(*this); }
+
+    wxRibbonBarEvent(const wxRibbonBarEvent& e) = default;
+    wxNODISCARD wxEvent *Clone() const override { return new wxRibbonBarEvent(*this); }
 
     wxRibbonPage* GetPage() {return m_page;}
     void SetPage(wxRibbonPage* page) {m_page = page;}
@@ -89,6 +98,7 @@ public:
     bool hovered;
     bool highlight;
     bool shown;
+    wxString keytip;
 };
 
 // This must be a class because it's forward declared.
@@ -152,6 +162,7 @@ public:
     void SetWindowStyleFlag(long style) override;
     long GetWindowStyleFlag() const override;
     virtual bool Realize() override;
+    bool Reparent(wxWindowBase* newParent) override;
 
     // Implementation only.
     bool IsToggleButtonHovered() const { return m_toggle_button_hovered; }
@@ -159,9 +170,38 @@ public:
 
     void HideIfExpanded();
 
-    // Return the image list containing images of the given size, creating it
-    // if necessary.
-    wxImageList* GetButtonImageList(wxSize size);
+    // Deprecated: wxRibbonButtonBar now uses wxBitmapBundle directly for
+    // DPI-aware bitmap management. This method is maintained for backward
+    // compatibility but is no longer used by wxRibbonButtonBar.
+    wxDEPRECATED_MSG("wxRibbonButtonBar now uses wxBitmapBundle for DPI support")
+    wxImageList* GetButtonImageList(wxSize size, int initialCount = 1);
+
+    // Key tips (popup windows showing associated keys).
+    void SetPageKeyTip(size_t page, const wxString& keytip);
+    void SetPageKeyTip(wxRibbonPage* page, const wxString& keytip);
+    void SetToggleButtonKeyTip(const wxString& keytip);
+    void SetHelpButtonKeyTip(const wxString& keytip);
+
+    bool ShowKeyTips();
+    void HideKeyTips();
+    bool AreKeyTipsShown() const { return m_keyTipsActive; }
+
+    struct TriggerKey
+    {
+        int keyCode;
+        int modifiers;
+    };
+
+    // Replaces all trigger keys with just this one (default is WXK_F10).
+    void SetKeyTipsTriggerKey(int keyCode, int modifiers = wxMOD_NONE);
+    // Adds an additional trigger key (e.g., Ctrl+F10 alongside F10).
+    void AddKeyTipsTriggerKey(int keyCode, int modifiers = wxMOD_NONE);
+    void ClearKeyTipsTriggerKeys();
+    const std::vector<TriggerKey>& GetKeyTipsTriggerKeys() const { return m_keyTipsTriggerKeys; }
+
+    // Implementation only: draw the badges of the keytip targets on 'window',
+    // if any, using the given art provider.
+    void DrawKeyTipsFor(wxDC& dc, wxWindow* window, wxRibbonArtProvider* art) const;
 
 protected:
     friend class wxRibbonPage;
@@ -183,6 +223,8 @@ protected:
     void OnEraseBackground(wxEraseEvent& evt);
     void DoEraseBackground(wxDC& dc);
     void OnSize(wxSizeEvent& evt);
+    void OnDPIChanged(wxDPIChangedEvent& evt);
+    void OnSysColourChanged(wxSysColourChangedEvent& evt);
     void OnMouseLeftDown(wxMouseEvent& evt);
     void OnMouseLeftUp(wxMouseEvent& evt);
     void OnMouseMiddleDown(wxMouseEvent& evt);
@@ -200,27 +242,83 @@ protected:
     wxRect m_tab_scroll_right_button_rect;
     wxRect m_toggle_button_rect;
     wxRect m_help_button_rect;
-    long m_flags;
-    int m_tabs_total_width_ideal;
-    int m_tabs_total_width_minimum;
-    int m_tab_margin_left;
-    int m_tab_margin_right;
-    int m_tab_height;
-    int m_tab_scroll_amount;
-    int m_current_page;
-    int m_current_hovered_page;
-    int m_tab_scroll_left_button_state;
-    int m_tab_scroll_right_button_state;
-    bool m_tab_scroll_buttons_shown;
-    bool m_arePanelsShown;
-    bool m_bar_hovered;
-    bool m_toggle_button_hovered;
-    bool m_help_button_hovered;
+    long m_flags = 0;
+    int m_tabs_total_width_ideal = 0;
+    int m_tabs_total_width_minimum = 0;
+    int m_tab_margin_left = 0;
+    int m_tab_margin_right = 0;
+    int m_tab_height = 0;
+    int m_tab_scroll_amount = 0;
+    int m_current_page = wxNOT_FOUND;
+    int m_current_hovered_page = wxNOT_FOUND;
+    int m_tab_scroll_left_button_state = 0;
+    int m_tab_scroll_right_button_state = 0;
+    bool m_tab_scroll_buttons_shown = false;
+    bool m_arePanelsShown = true;
+    bool m_bar_hovered = false;
+    bool m_toggle_button_hovered = false;
+    bool m_help_button_hovered = false;
 
-    wxRibbonDisplayMode m_ribbon_state;
+    wxRibbonDisplayMode m_ribbon_state = wxRIBBON_BAR_PINNED;
 
     wxVector<wxImageList*> m_image_lists;
 
+    // Key tips implementation.
+private:
+    struct wxRibbonKeyTipInfo
+    {
+        enum class Kind
+        {
+            PageTab,
+            ToggleButton,
+            HelpButton,
+            ExtButton,
+            MinimisedPanel,
+            ButtonBarItem,
+            ToolBarItem,
+            Gallery
+        };
+
+        wxString fullKeyTip;
+        wxString remaining;
+        wxRect rect;
+        wxWindow* window = nullptr;
+        Kind kind = Kind::PageTab;
+
+        // For Kind::ButtonBarItem/Kind::ToolBarItem: targets the item's
+        // dropdown arrow instead of its main click area.
+        bool dropdown = false;
+
+        // Data needed to activate this target. Only the member(s) matching
+        // 'kind' are used.
+        size_t pageIndex = 0;
+        wxRibbonPanel* panel = nullptr;
+        wxRibbonButtonBar* buttonBar = nullptr;
+        wxWindowID buttonBarItemId = wxID_ANY;
+        wxRibbonToolBar* toolBar = nullptr;
+        wxWindowID toolBarItemId = wxID_ANY;
+    };
+
+    void DoBuildKeyTipTargets();
+    void DoActivateKeyTipTarget(const wxRibbonKeyTipInfo& target);
+    bool IsKeyTipsTriggerKey(int keyCode, int modifiers) const;
+    void OnKeyTipsCharHook(wxKeyEvent& event);
+    void OnKeyTipsActivate(wxActivateEvent& event);
+    void OnKeyTipsWindowDestroy(wxWindowDestroyEvent& event);
+    void RefreshKeyTipTargetWindows();
+
+    bool m_keyTipsActive = false;
+    wxString m_keyTipsTypedPrefix;
+    std::vector<wxRibbonKeyTipInfo> m_keyTipsTargets;
+    // Every window with a badge this session, so a narrowed-away badge
+    // still gets its window refreshed once (to erase it).
+    std::vector<wxWindow*> m_keyTipsWindows;
+    wxWindow* m_keyTipsTopLevelParent = nullptr;
+    std::vector<TriggerKey> m_keyTipsTriggerKeys;
+    wxString m_toggleButtonKeyTip;
+    wxString m_helpButtonKeyTip;
+
+protected:
 #ifndef SWIG
     wxDECLARE_CLASS(wxRibbonBar);
     wxDECLARE_EVENT_TABLE();

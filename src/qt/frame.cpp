@@ -21,6 +21,8 @@
 
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMenuBar>
+#include <QtWidgets/QStatusBar>
+#include <QtWidgets/QToolBar>
 
 class wxQtMainWindow : public wxQtEventSignalHandler< QMainWindow, wxFrame >
 {
@@ -49,8 +51,12 @@ public:
 
 wxFrame::~wxFrame()
 {
-    // central widget should be deleted by qt when the main window is destroyed
-    QtStoreWindowPointer( GetQMainWindow()->centralWidget(), nullptr );
+    // Always false for MDI children
+    if ( GetQMainWindow() && GetQMainWindow()->centralWidget() )
+    {
+        // central widget should be deleted by qt when the main window is destroyed
+        QtStoreWindowPointer(GetQMainWindow()->centralWidget(), nullptr);
+    }
 }
 
 bool wxFrame::Create( wxWindow *parent, wxWindowID id, const wxString& title,
@@ -58,9 +64,13 @@ bool wxFrame::Create( wxWindow *parent, wxWindowID id, const wxString& title,
 {
     m_qtWindow = new wxQtMainWindow( parent, this );
 
-    // QMainWindow takes ownership of the central widget pointer.
     // Not using QScrollArea or wxPanel is intentional here as it makes the
     // implementation simpler and more manageable.
+    //
+    // Quoting the Qt docs [QMainWindow::setCentralWidget()]:
+    // QMainWindow takes ownership of the widget pointer and deletes it at
+    // the appropriate time.
+    //
     GetQMainWindow()->setCentralWidget( new wxQtCentralWidget( this, this ) );
 
     if ( !wxFrameBase::Create( parent, id, title, pos, size, style, name ) )
@@ -77,20 +87,24 @@ void wxFrame::SetMenuBar( wxMenuBar *menuBar )
 {
     if ( menuBar )
     {
-        // The current menu bar could be deleted by Qt when dereferencing it so
-        // then that QMenuBar will raise a segmentation fault when using it again
-        wxCHECK_RET( menuBar->GetHandle(),
-                     "Using a replaced menu bar is not supported in wxQT");
-        // Warning: Qt main window takes ownership of the QMenuBar pointer:
-        GetQMainWindow()->setMenuBar( menuBar->GetQMenuBar() );
+        // To prevent QtMainWindow from deleting the old QMenuBar pointer (so that
+        // the old wxMenuBar can be reused, which is the case in the MDI framework
+        // for example) we reparent the old QMenuBar before calling setMenuBar().
+        // Also note that we call menuWidget() and not menuBar() because the latter
+        // creates a new one if one doesn't exist before.
+
+        auto oldMenuBar = GetQMainWindow()->menuWidget();
+        if ( oldMenuBar )
+            oldMenuBar->setParent(nullptr);
+
+        GetQMainWindow()->setMenuBar(menuBar->GetQMenuBar());
     }
     else
     {
-        // Creating an empty menu bar should hide it and free the previous:
-        QMenuBar *qmenubar = new QMenuBar(GetHandle());
-        GetQMainWindow()->setMenuBar( qmenubar );
+        GetQMainWindow()->setMenuBar(nullptr);
     }
-    wxFrameBase::SetMenuBar( menuBar );
+
+    wxFrameBase::SetMenuBar(menuBar);
 }
 
 #if wxUSE_STATUSBAR
@@ -140,64 +154,57 @@ void wxFrame::SetToolBar(wxToolBar *toolbar)
 
 void wxFrame::SetWindowStyleFlag( long style )
 {
-    wxWindow::SetWindowStyleFlag( style );
+    wxFrameBase::SetWindowStyleFlag( style );
 
-    Qt::WindowFlags qtFlags = Qt::CustomizeWindowHint;
+    auto qtFlags = GetHandle()->windowFlags();
+
+    if ( HasFlag( wxFRAME_NO_TASKBAR ) )
+    {
+        qtFlags |= Qt::Dialog;
+    }
 
     if ( HasFlag( wxFRAME_TOOL_WINDOW ) )
     {
         qtFlags |= Qt::Tool;
     }
-    else
-    {
-        qtFlags |= Qt::Window;
-    }
 
-    if ( HasFlag(wxCAPTION) )
+    if ( HasFlag(wxSIMPLE_BORDER) || HasFlag(wxBORDER_NONE) )
     {
-        qtFlags |= Qt::WindowTitleHint;
-    }
-
-    if ( HasFlag(wxSYSTEM_MENU) )
-    {
-        qtFlags |= Qt::WindowSystemMenuHint;
-    }
-
-    if ( HasFlag(wxSTAY_ON_TOP) )
-    {
-        qtFlags |= Qt::WindowStaysOnTopHint;
-    }
-
-    if ( HasFlag(wxMINIMIZE_BOX) )
-    {
-        qtFlags |= Qt::WindowMinimizeButtonHint;
-    }
-
-    if ( HasFlag(wxMAXIMIZE_BOX) )
-    {
-        qtFlags |= Qt::WindowMaximizeButtonHint;
-    }
-
-    if ( HasFlag(wxCLOSE_BOX) )
-    {
-        qtFlags |= Qt::WindowCloseButtonHint;
-    }
-
-    if ( HasFlag(wxNO_BORDER) )
-    {
-        // Note any of the other window decoration hints (e.g.
-        // Qt::WindowCloseButtonHint, Qt::WindowTitleHint) override this style.
-        // It doesn't seem possible to create a QMainWindow with a title bar
-        // but without a resize border.
         qtFlags |= Qt::FramelessWindowHint;
     }
 
-    GetQMainWindow()->setWindowFlags(qtFlags);
+    GetHandle()->setWindowFlags(qtFlags);
+}
+
+void wxFrame::SetWindowModality(wxWindowMode modality)
+{
+    wxCHECK_RET( !IsShown(),
+                 "SetWindowModality() must be called before showing the window" );
+
+    Qt::WindowModality qtModality;
+
+    switch ( modality )
+    {
+        case wxWindowMode::AppModal:
+            qtModality = Qt::ApplicationModal;
+            break;
+
+        case wxWindowMode::WindowModal:
+            qtModality = Qt::WindowModal;
+            break;
+
+        default:
+            qtModality = Qt::NonModal;
+            break;
+    }
+
+    GetHandle()->setWindowModality(qtModality);
 }
 
 QWidget* wxFrame::QtGetParentWidget() const
 {
-    return GetQMainWindow()->centralWidget();
+    // GetQMainWindow() always returns nullptr for MDI children
+    return GetQMainWindow() ? GetQMainWindow()->centralWidget() : GetHandle();
 }
 
 void wxFrame::AddChild( wxWindowBase *child )
@@ -218,28 +225,77 @@ void wxFrame::RemoveChild( wxWindowBase *child )
 // excluding any menubar and toolbar if any.
 wxPoint wxFrame::GetClientAreaOrigin() const
 {
-    return wxQtConvertPoint( GetQMainWindow()->centralWidget()->pos() );
+    // GetQMainWindow() always returns nullptr for MDI children
+    if ( GetQMainWindow() )
+    {
+        return wxQtConvertPoint( GetQMainWindow()->centralWidget()->pos() );
+    }
+
+    return wxWindow::GetClientAreaOrigin();
 }
 
-void wxFrame::DoGetClientSize(int *width, int *height) const
-{
-    wxFrameBase::DoGetClientSize(width, height);
-}
+// ----------------------------------------------------------------------------
+// wxFrame client size calculations
+// ----------------------------------------------------------------------------
 
 void wxFrame::DoSetClientSize(int width, int height)
 {
-    wxWindow::DoSetClientSize(width, height);
+    const bool hasPendingResize =
+        GetHandle()->testAttribute(Qt::WA_PendingResizeEvent);
 
-    int adjustedWidth, adjustedHeight;
-    DoGetClientSize(&adjustedWidth, &adjustedHeight);
+    auto menubar = GetMenuBar();
+    if ( menubar && menubar->IsShown() )
+    {
+        // QMenuBar doesn't report correct sizes while the parent window has
+        // pending resize. So we use heightForWidth() to get the correct height.
+        if ( hasPendingResize )
+            height += menubar->GetHandle()->heightForWidth(GetSize().x);
+        else
+            height += menubar->GetSize().y;
+    }
 
-    QWidget *centralWidget = GetQMainWindow()->centralWidget();
-    QRect geometry = centralWidget->geometry();
-    geometry.setSize(QSize(adjustedWidth, adjustedHeight));
-    centralWidget->setGeometry(geometry);
+#if wxUSE_STATUSBAR
+    auto statbar = GetStatusBar();
+    if ( statbar && statbar->IsShown() )
+    {
+        // QStatusBar doesn't report correct sizes while the parent window has
+        // pending resize. So we use sizeHint().height() to get the correct height.
+        if ( hasPendingResize )
+            height += statbar->GetHandle()->sizeHint().height();
+        else
+            height += statbar->GetSize().y;
+    }
+#endif // wxUSE_STATUSBAR
+
+#if wxUSE_TOOLBAR
+    auto toolbar = GetToolBar();
+    if ( toolbar && toolbar->IsShown() )
+    {
+        wxSize tbSize;
+
+        // QToolBar doesn't report correct sizes while the parent window has
+        // pending resize. So we use sizeHint() to get the correct size.
+        if ( hasPendingResize )
+            tbSize = wxQtConvertSize(toolbar->GetHandle()->sizeHint());
+        else
+            tbSize = toolbar->GetSize();
+
+        if ( toolbar->IsVertical() )
+            width  += tbSize.x;
+        else
+            height += tbSize.y;
+    }
+#endif // wxUSE_TOOLBAR
+
+    wxFrameBase::DoSetClientSize(width, height);
 }
 
 QMainWindow *wxFrame::GetQMainWindow() const
 {
-    return static_cast<QMainWindow*>(m_qtWindow);
+    // Notice that we intentionally use qobject_cast<> here (and not static_cast<>)
+    // because when this function is called on an object of wxMDIChildFrame (which
+    // derives from this class) m_qtWindow is not a QMainWindow, and we want to
+    // return nullptr in this case.
+
+    return qobject_cast<QMainWindow*>(m_qtWindow);
 }

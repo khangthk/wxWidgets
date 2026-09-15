@@ -17,12 +17,15 @@
 
 #ifndef WX_PRECOMP
     #include "wx/app.h"
+    #include "wx/frame.h"
 #endif // WX_PRECOMP
 
 #include "wx/panel.h"
 
 #include "wx/aui/auibar.h"
 #include "wx/aui/auibook.h"
+#include "wx/aui/framemanager.h"
+#include "wx/aui/serializer.h"
 
 #include "asserthelper.h"
 
@@ -40,22 +43,167 @@ public:
     {
     }
 
-    ~AuiNotebookTestCase()
+
+protected:
+    const std::unique_ptr<wxAuiNotebook> nb;
+};
+
+class TestAuiNotebook : public wxAuiNotebook
+{
+public:
+    TestAuiNotebook()
+        : wxAuiNotebook(wxTheApp->GetTopWindow())
     {
-        delete nb;
+    }
+
+    using wxAuiNotebook::OnTabButton;
+    using wxAuiNotebook::OnTabMiddleDown;
+    using wxAuiNotebook::OnTabMiddleUp;
+    using wxAuiNotebook::OnTabRightDown;
+    using wxAuiNotebook::OnTabRightUp;
+};
+
+class TestAuiManager : public wxAuiManager
+{
+public:
+    TestAuiManager(wxWindow* managedWindow)
+        : wxAuiManager(managedWindow)
+    {
+    }
+
+    wxAuiDockUIPart* FindPaneSizer()
+    {
+        for ( auto& part : m_uiParts )
+        {
+            if ( part.type == wxAuiDockUIPart::typePaneSizer )
+                return &part;
+        }
+
+        return nullptr;
+    }
+
+    void ClickWithoutMoving(wxAuiDockUIPart* part)
+    {
+        const wxPoint pos = part->rect.GetPosition() +
+            wxPoint(part->rect.GetWidth()/2, part->rect.GetHeight()/2);
+
+        wxMouseEvent down(wxEVT_LEFT_DOWN);
+        down.m_x = pos.x;
+        down.m_y = pos.y;
+        OnLeftDown(down);
+
+        wxMouseEvent motion(wxEVT_MOTION);
+        motion.m_x = pos.x;
+        motion.m_y = pos.y;
+        OnMotion(motion);
+
+        wxMouseEvent up(wxEVT_LEFT_UP);
+        up.m_x = pos.x;
+        up.m_y = pos.y;
+        OnLeftUp(up);
+    }
+};
+
+class AuiManagerTestCase
+{
+public:
+    AuiManagerTestCase()
+        : frame(new wxFrame(nullptr, wxID_ANY, "wxAuiManager test"))
+        , manager(frame.get())
+    {
+        frame->SetClientSize(800, 600);
+        // GTK needs a realized TLW before the synthetic sash click below can
+        // capture the mouse.
+        frame->Show();
+        wxYield();
+    }
+
+    ~AuiManagerTestCase()
+    {
+        manager.UnInit();
     }
 
 protected:
-    wxAuiNotebook* const nb;
+    std::unique_ptr<wxFrame> frame;
+    TestAuiManager manager;
 };
 
 // ----------------------------------------------------------------------------
 // the tests themselves
 // ----------------------------------------------------------------------------
 
+TEST_CASE_METHOD(AuiManagerTestCase, "wxAuiManager::AddPaneBestSize", "[aui]")
+{
+    wxWindow* const pane = new wxPanel(frame.get());
+    wxWindow* const center = new wxPanel(frame.get());
+
+    wxAuiPaneInfo paneInfo;
+    paneInfo.BestSize(320, 200).Left().CaptionVisible(false).PaneBorder(false);
+
+    REQUIRE( manager.AddPane(pane, paneInfo) );
+    REQUIRE( manager.AddPane(center, wxAuiPaneInfo().CenterPane()) );
+
+    manager.Update();
+
+    CHECK( pane->GetSize().x == 320 );
+}
+
+TEST_CASE_METHOD(AuiManagerTestCase, "wxAuiManager::AddPaneDockSize", "[aui]")
+{
+    wxWindow* const pane = new wxPanel(frame.get());
+    wxWindow* const center = new wxPanel(frame.get());
+
+    wxAuiPaneInfo paneInfo;
+    paneInfo.BestSize(320, 200).Left().CaptionVisible(false).PaneBorder(false);
+    paneInfo.dock_size = 180;
+
+    REQUIRE( manager.AddPane(pane, paneInfo) );
+    REQUIRE( manager.AddPane(center, wxAuiPaneInfo().CenterPane()) );
+
+    manager.Update();
+
+    CHECK( pane->GetSize().x == 180 );
+}
+
+TEST_CASE_METHOD(AuiManagerTestCase, "wxAuiManager::SizerClick", "[aui]")
+{
+    wxWindow* const first = new wxPanel(frame.get());
+    wxWindow* const second = new wxPanel(frame.get());
+    wxWindow* const center = new wxPanel(frame.get());
+
+    REQUIRE( manager.AddPane(first, wxAuiPaneInfo().Top().
+        MinSize(200, 100).CaptionVisible(false).PaneBorder(false)) );
+    REQUIRE( manager.AddPane(second, wxAuiPaneInfo().Top().
+        MinSize(200, 100).CaptionVisible(false).PaneBorder(false)) );
+    REQUIRE( manager.AddPane(center, wxAuiPaneInfo().CenterPane()) );
+
+    manager.Update();
+
+    const wxSize firstSize = first->GetSize();
+    const wxSize secondSize = second->GetSize();
+    const int firstProportion = manager.GetPane(first).dock_proportion;
+    const int secondProportion = manager.GetPane(second).dock_proportion;
+
+    wxAuiDockUIPart* sizer = manager.FindPaneSizer();
+    REQUIRE( sizer );
+
+    for ( int n = 0; n < 4; n++ )
+    {
+        manager.ClickWithoutMoving(sizer);
+
+        sizer = manager.FindPaneSizer();
+        REQUIRE( sizer );
+    }
+
+    CHECK( first->GetSize() == firstSize );
+    CHECK( second->GetSize() == secondSize );
+    CHECK( manager.GetPane(first).dock_proportion == firstProportion );
+    CHECK( manager.GetPane(second).dock_proportion == secondProportion );
+}
+
 TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 {
-    wxPanel *p = new wxPanel(nb);
+    wxPanel *p = new wxPanel(nb.get());
     p->SetMinSize(wxSize(100, 100));
     REQUIRE( nb->AddPage(p, "Center Pane") );
 
@@ -63,11 +211,11 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 
     SECTION( "Single pane with multiple tabs" )
     {
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(300, 100));
         nb->AddPage(p, "Center Tab 2");
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(100, 200));
         nb->AddPage(p, "Center Tab 3");
 
@@ -76,21 +224,21 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 
     SECTION( "Horizontal split" )
     {
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(25, 0));
         nb->AddPage(p, "Left Pane");
         nb->Split(nb->GetPageCount()-1, wxLEFT);
 
         CHECK( nb->GetBestSize() == wxSize(125, 100 + tabHeight) );
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(50, 0));
         nb->AddPage(p, "Right Pane 1");
         nb->Split(nb->GetPageCount()-1, wxRIGHT);
 
         CHECK( nb->GetBestSize() == wxSize(175, 100 + tabHeight) );
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(100, 0));
         nb->AddPage(p, "Right Pane 2");
         nb->Split(nb->GetPageCount()-1, wxRIGHT);
@@ -100,19 +248,19 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 
     SECTION( "Vertical split" )
     {
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(0, 100));
         nb->AddPage(p, "Top Pane 1");
         nb->Split(nb->GetPageCount()-1, wxTOP);
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(0, 50));
         nb->AddPage(p, "Top Pane 2");
         nb->Split(nb->GetPageCount()-1, wxTOP);
 
         CHECK( nb->GetBestSize() == wxSize(100, 250 + 3*tabHeight) );
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(0, 25));
         nb->AddPage(p, "Bottom Pane");
         nb->Split(nb->GetPageCount()-1, wxBOTTOM);
@@ -122,22 +270,22 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 
     SECTION( "Surrounding panes" )
     {
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(50, 25));
         nb->AddPage(p, "Bottom Pane");
         nb->Split(nb->GetPageCount()-1, wxBOTTOM);
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(50, 120));
         nb->AddPage(p, "Right Pane");
         nb->Split(nb->GetPageCount()-1, wxRIGHT);
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(225, 50));
         nb->AddPage(p, "Top Pane");
         nb->Split(nb->GetPageCount()-1, wxTOP);
 
-        p = new wxPanel(nb);
+        p = new wxPanel(nb.get());
         p->SetMinSize(wxSize(25, 105));
         nb->AddPage(p, "Left Pane");
         nb->Split(nb->GetPageCount()-1, wxLEFT);
@@ -148,17 +296,17 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::DoGetBestSize", "[aui]")
 
 TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::RTTI", "[aui][rtti]")
 {
-    wxBookCtrlBase* const book = nb;
-    CHECK( wxDynamicCast(book, wxAuiNotebook) == nb );
+    wxBookCtrlBase* const book = nb.get();
+    CHECK( wxDynamicCast(book, wxAuiNotebook) == nb.get() );
 
-    CHECK( wxDynamicCast(nb, wxBookCtrlBase) == book );
+    CHECK( wxDynamicCast(nb.get(), wxBookCtrlBase) == book );
 }
 
 TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::FindPage", "[aui]")
 {
-    wxPanel *p1 = new wxPanel(nb);
-    wxPanel *p2 = new wxPanel(nb);
-    wxPanel *p3 = new wxPanel(nb);
+    wxPanel *p1 = new wxPanel(nb.get());
+    wxPanel *p2 = new wxPanel(nb.get());
+    wxPanel *p3 = new wxPanel(nb.get());
     REQUIRE( nb->AddPage(p1, "Page 1") );
     REQUIRE( nb->AddPage(p2, "Page 2") );
 
@@ -168,9 +316,357 @@ TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::FindPage", "[aui]")
     CHECK( nb->FindPage(p3) == wxNOT_FOUND );
 }
 
+TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::RemoveLastPageEvent", "[aui]")
+{
+    wxPanel *p = new wxPanel(nb.get());
+    REQUIRE( nb->AddPage(p, "Page 1") );
+    CHECK( nb->GetSelection() == 0 );
+
+    int numChanged = 0;
+    int oldSelection = wxNOT_FOUND;
+    int selection = wxNOT_FOUND;
+
+    nb->Bind(wxEVT_AUINOTEBOOK_PAGE_CHANGED,
+             [&](wxAuiNotebookEvent& event)
+             {
+                 numChanged++;
+                 oldSelection = event.GetOldSelection();
+                 selection = event.GetSelection();
+             });
+
+    SECTION( "DeletePage" )
+    {
+        REQUIRE( nb->DeletePage(0) );
+    }
+
+    SECTION( "RemovePage" )
+    {
+        REQUIRE( nb->RemovePage(0) );
+    }
+
+    CHECK( nb->GetSelection() == wxNOT_FOUND );
+    CHECK( numChanged == 1 );
+    CHECK( oldSelection == 0 );
+    CHECK( selection == wxNOT_FOUND );
+}
+
+TEST_CASE("wxAuiNotebook::SplitTabEventSelections", "[aui]")
+{
+    TestAuiNotebook nb;
+    wxPanel *p1 = new wxPanel(&nb);
+    wxPanel *p2 = new wxPanel(&nb);
+    REQUIRE( nb.AddPage(p1, "Page 1") );
+    REQUIRE( nb.AddPage(p2, "Page 2") );
+
+    nb.Split(1, wxRIGHT);
+
+    wxAuiTabCtrl *tabCtrl = nullptr;
+    int tabIdx = wxNOT_FOUND;
+    REQUIRE( nb.FindTab(p2, &tabCtrl, &tabIdx) );
+    REQUIRE( tabCtrl );
+    CHECK( tabIdx == 0 );
+
+    std::vector<int> selections;
+
+    SECTION( "Middle down" )
+    {
+        nb.Bind(wxEVT_AUINOTEBOOK_TAB_MIDDLE_DOWN,
+                [&](wxAuiNotebookEvent& event)
+                {
+                    selections.push_back(event.GetSelection());
+                });
+
+        nb.OnTabMiddleDown(tabCtrl, tabIdx);
+    }
+
+    SECTION( "Middle up" )
+    {
+        nb.Bind(wxEVT_AUINOTEBOOK_TAB_MIDDLE_UP,
+                [&](wxAuiNotebookEvent& event)
+                {
+                    selections.push_back(event.GetSelection());
+                });
+
+        nb.OnTabMiddleUp(tabCtrl, tabIdx);
+    }
+
+    SECTION( "Right down" )
+    {
+        nb.Bind(wxEVT_AUINOTEBOOK_TAB_RIGHT_DOWN,
+                [&](wxAuiNotebookEvent& event)
+                {
+                    selections.push_back(event.GetSelection());
+                });
+
+        nb.OnTabRightDown(tabCtrl, tabIdx);
+    }
+
+    SECTION( "Right up" )
+    {
+        nb.Bind(wxEVT_AUINOTEBOOK_TAB_RIGHT_UP,
+                [&](wxAuiNotebookEvent& event)
+                {
+                    selections.push_back(event.GetSelection());
+                });
+
+        nb.OnTabRightUp(tabCtrl, tabIdx);
+    }
+
+    REQUIRE( selections.size() == 1 );
+    CHECK( selections[0] == 1 );
+}
+
+// This tests for the problem of https://github.com/wxWidgets/wxWidgets/issues/26801
+TEST_CASE("wxAuiNotebook::ButtonEvent", "[aui]")
+{
+    TestAuiNotebook nb;
+    wxPanel *p1 = new wxPanel(&nb);
+    wxPanel *p2 = new wxPanel(&nb);
+    REQUIRE( nb.AddPage(p1, "Page 1") );
+    REQUIRE( nb.AddPage(p2, "Page 2") );
+
+    // Split the notebook to check that the event uses the index of the page in
+    // the notebook and not its position in its own tab control.
+    nb.Split(1, wxRIGHT);
+
+    wxAuiTabCtrl *tabCtrl = nullptr;
+    int tabIdx = wxNOT_FOUND;
+    REQUIRE( nb.FindTab(p2, &tabCtrl, &tabIdx) );
+    REQUIRE( tabCtrl );
+    REQUIRE( tabIdx == 0 );
+
+    int numEvents = 0;
+    int selection = wxNOT_FOUND;
+    int button = wxID_NONE;
+    bool skip = true;
+
+    nb.Bind(wxEVT_AUINOTEBOOK_BUTTON,
+            [&](wxAuiNotebookEvent& event)
+            {
+                numEvents++;
+                selection = event.GetSelection();
+                button = event.GetInt();
+                event.Skip(skip);
+            });
+
+    // Note that this event must be skipped by the handler if the default
+    // action, e.g. closing the page, is still to be performed.
+
+    SECTION( "Custom button" )
+    {
+        nb.OnTabButton(tabCtrl, tabIdx, wxAUI_BUTTON_CUSTOM1);
+
+        CHECK( numEvents == 1 );
+        CHECK( selection == 1 );
+        CHECK( button == wxAUI_BUTTON_CUSTOM1 );
+    }
+
+    SECTION( "Close button" )
+    {
+        nb.OnTabButton(tabCtrl, tabIdx, wxAUI_BUTTON_CLOSE);
+
+        CHECK( numEvents == 1 );
+        CHECK( selection == 1 );
+        CHECK( button == wxAUI_BUTTON_CLOSE );
+
+        CHECK( nb.GetPageCount() == 1 );
+    }
+
+    SECTION( "Close button not skipped" )
+    {
+        skip = false;
+
+        nb.OnTabButton(tabCtrl, tabIdx, wxAUI_BUTTON_CLOSE);
+
+        CHECK( numEvents == 1 );
+
+        // Handling the event without skipping it prevents the page from being
+        // closed, as this was the case in the previous versions too.
+        CHECK( nb.GetPageCount() == 2 );
+    }
+}
+
+TEST_CASE_METHOD(AuiNotebookTestCase, "wxAuiNotebook::Layout", "[aui]")
+{
+    const auto addPage = [this](int n)
+    {
+        return nb->AddPage(new wxPanel(nb.get()),
+                           wxString::Format("Page %d", n + 1));
+    };
+
+    for ( int n = 0; n < 5; n++ )
+    {
+        REQUIRE( addPage(n) );
+    }
+
+    using Ints = std::vector<int>;
+    using Indices = std::vector<size_t>;
+
+    // This serializer allows the code below to tweak its data before using it
+    // as deserializer.
+    class TestSerializer : public wxAuiBookSerializer,
+                           public wxAuiBookDeserializer
+    {
+    public:
+        virtual void BeforeSaveNotebook(const wxString& name) override
+        {
+            m_name = name;
+            m_afterSaveCalled = false;
+            m_tabsLayoutInfo.clear();
+        }
+
+        virtual void
+        SaveNotebookTabControl(const wxAuiTabLayoutInfo& tab) override
+        {
+            m_tabsLayoutInfo.push_back(tab);
+        }
+
+        virtual void AfterSaveNotebook() override
+        {
+            m_afterSaveCalled = true;
+        }
+
+        virtual std::vector<wxAuiTabLayoutInfo>
+        LoadNotebookTabs(const wxString& name) override
+        {
+            CHECK( name == m_name );
+
+            m_orphanedPages.clear();
+
+            return m_tabsLayoutInfo;
+        }
+
+        virtual bool
+        HandleOrphanedPage(wxAuiNotebook& WXUNUSED(book),
+                           int page,
+                           wxAuiTabCtrl** WXUNUSED(tabCtrl),
+                           int* tabIndex) override
+        {
+            m_orphanedPages.push_back(page);
+
+            *tabIndex = m_orphanedPageReturnIndex;
+
+            return m_orphanedPageReturnValue;
+        }
+
+        wxString m_name;
+        std::vector<wxAuiTabLayoutInfo> m_tabsLayoutInfo;
+        bool m_afterSaveCalled = false;
+
+        Ints m_orphanedPages;
+        bool m_orphanedPageReturnValue = true;
+        int m_orphanedPageReturnIndex = wxNOT_FOUND;
+    } ser;
+
+    // Just for convenience.
+    auto& info = ser.m_tabsLayoutInfo;
+
+    // Check the default layout has expected representation.
+    nb->SaveLayout("layout", ser);
+    CHECK( ser.m_name == "layout" );
+    CHECK( ser.m_afterSaveCalled );
+    REQUIRE( info.size() == 1 );
+
+    CHECK( info[0].pages == Ints{} );
+    CHECK( info[0].pinned == Ints{} );
+    CHECK( info[0].active == 0 );
+
+
+    // Check that the active page is restored correctly.
+    info[0].active = 1;
+    nb->LoadLayout("layout", ser);
+
+    CHECK( nb->GetSelection() == 1 );
+
+
+    // Check that page order is serialized as expected.
+    auto* mainTabCtrl = nb->GetMainTabCtrl();
+    REQUIRE( mainTabCtrl );
+    CHECK( mainTabCtrl->MovePage(1, 4) );
+
+    nb->SaveLayout("layout", ser);
+    REQUIRE( info.size() == 1 );
+    CHECK( info[0].pages == Ints{0, 2, 3, 4, 1} );
+
+
+    // Check that pinned pages are serialized as expected.
+    REQUIRE( nb->SetPageKind(2, wxAuiTabKind::Pinned) );
+
+    nb->SaveLayout("layout", ser);
+    REQUIRE( info.size() == 1 );
+
+    // Note that pinning a page moves it in front of all other pages.
+    CHECK( info[0].pages == Ints{2, 0, 3, 4, 1} );
+    CHECK( info[0].pinned == Ints{2} );
+
+
+    // Check a more complicated case with both locked and pinned pages.
+    REQUIRE( nb->SetPageKind(4, wxAuiTabKind::Locked) );
+    REQUIRE( nb->SetPageKind(3, wxAuiTabKind::Pinned) );
+
+    nb->SaveLayout("layout", ser);
+    REQUIRE( info.size() == 1 );
+
+    // Note that pinning a page moves it in front of all other pages.
+    CHECK( info[0].pages == Ints{4, 2, 3, 0, 1} );
+    CHECK( info[0].pinned == Ints{2, 3} );
+
+
+    // Check that restoring existing layout after adding some pages works.
+    addPage(5);
+    addPage(6);
+    nb->LoadLayout("layout", ser);
+    CHECK( ser.m_orphanedPages == Ints{5, 6} );
+
+    // By default, orphaned pages should have been appended.
+    CHECK( nb->GetPagesInDisplayOrder(mainTabCtrl) ==
+                Indices{4, 2, 3, 0, 1, 5, 6} );
+
+    // But we can change this by telling deserializer to insert them in front.
+    ser.m_orphanedPageReturnIndex = 0;
+
+    nb->LoadLayout("layout", ser);
+    CHECK( ser.m_orphanedPages == Ints{5, 6} );
+
+    CHECK( nb->GetPagesInDisplayOrder(mainTabCtrl) ==
+                Indices{6, 5, 4, 2, 3, 0, 1} );
+
+    // Or drop them entirely.
+    ser.m_orphanedPageReturnValue = false;
+
+    nb->LoadLayout("layout", ser);
+    CHECK( ser.m_orphanedPages == Ints{5, 6} );
+
+    CHECK( nb->GetPagesInDisplayOrder(mainTabCtrl) ==
+                Indices{4, 2, 3, 0, 1} );
+
+
+    // Finally, check that invalid data is handled gracefully.
+    info[0].active = 100;
+    info[0].pages = Ints{10, 0, 1, 2, 3, 4};
+    info[0].pinned = Ints{2, 99, 0};
+
+    nb->LoadLayout("layout", ser);
+    CHECK( ser.m_orphanedPages == Ints{} );
+
+    // Locked tab should have remained first.
+    CHECK( nb->GetPagesInDisplayOrder(mainTabCtrl) == Indices{4, 0, 1, 2, 3} );
+
+    // And selection should have been set to it because the specified value was
+    // invalid.
+    CHECK( nb->GetSelection() == 4 );
+
+    // And only tabs appearing before the normal ones can be pinned.
+    CHECK( nb->GetPageKind(0) == wxAuiTabKind::Pinned );
+    CHECK( nb->GetPageKind(1) == wxAuiTabKind::Normal );
+    CHECK( nb->GetPageKind(2) == wxAuiTabKind::Normal );
+    CHECK( nb->GetPageKind(3) == wxAuiTabKind::Normal );
+    CHECK( nb->GetPageKind(4) == wxAuiTabKind::Locked );
+}
+
 TEST_CASE("wxAuiToolBar::Items", "[aui][toolbar]")
 {
-    std::unique_ptr<wxAuiToolBar> tbar{new wxAuiToolBar(wxTheApp->GetTopWindow())};
+    auto tbar = make_unique<wxAuiToolBar>(wxTheApp->GetTopWindow());
 
     // Check that adding more toolbar elements doesn't invalidate the existing
     // pointers.

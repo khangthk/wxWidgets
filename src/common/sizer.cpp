@@ -33,6 +33,10 @@
 #include "wx/listimpl.cpp"
 #include "wx/private/window.h"
 
+#ifndef wxHAS_DPI_INDEPENDENT_PIXELS
+    #include "wx/private/rescale.h"
+#endif // !wxHAS_DPI_INDEPENDENT_PIXELS
+
 #include <memory>
 
 //---------------------------------------------------------------------------
@@ -83,6 +87,84 @@ WX_DEFINE_EXPORTED_LIST( wxSizerItemList )
        growablecols
     minsize
 */
+
+// ----------------------------------------------------------------------------
+// global functions
+// ----------------------------------------------------------------------------
+
+namespace
+{
+
+// Helper formatting wxSize as string.
+wxString ToString(const wxSize& size)
+{
+    return wxString::Format("%dx%d", size.x, size.y);
+}
+
+// wxDumpSizer() helper calling itself recursively to dump the whole sizer tree.
+wxString DoDumpSizer(const wxSizer* sizer, const wxSize& minSize, int level)
+{
+    wxString str = sizer->GetClassInfo()->GetClassName();
+    if ( auto* const boxSizer = wxDynamicCast(sizer, wxBoxSizer) )
+    {
+        str += boxSizer->IsVertical() ? "[V]" : "[H]";
+    }
+
+    switch ( sizer->GetItemCount() )
+    {
+        case 0:
+            str += " (empty)";
+            break;
+
+        case 1:
+            break;
+
+        default:
+            str += wxString::Format(" (%zu items)", sizer->GetItemCount());
+    }
+
+    if ( minSize != wxDefaultSize )
+    {
+        str += wxString::Format(" min size %s", ToString(minSize));
+    }
+
+    for ( const wxSizerItem* item : sizer->GetChildren() )
+    {
+        str += "\n";
+        str += wxString(' ', level + 1);
+
+        if ( wxSizer* child = item->GetSizer() )
+        {
+            str += DoDumpSizer(child, item->GetMinSize(), level + 1);
+        }
+        else if ( wxWindow* win = item->GetWindow() )
+        {
+            str += wxString::Format("%s min size %s",
+                                    wxDumpWindow(win),
+                                    ToString(item->GetMinSize()));
+        }
+        else
+        {
+            wxASSERT_MSG( item->IsSpacer(), "unknown wxSizerItem kind" );
+
+            str += wxString::Format("space %s", ToString(item->GetSpacer()));
+        }
+    }
+
+    return str;
+}
+
+} // anonymous namespace
+
+// debugger helper: this function can be called from a debugger to show what
+// the sizer contains
+extern wxString wxDumpSizer(const wxSizer* sizer)
+{
+    if ( !sizer )
+        return "<null sizer>";
+
+    return DoDumpSizer(sizer, wxDefaultSize, 0);
+}
 
 // ----------------------------------------------------------------------------
 // wxSizerFlags
@@ -538,15 +620,33 @@ bool wxSizerItem::InformFirstDirection(int direction, int size, int availableOth
     // Pass the information along to the held object
     if (IsSizer())
     {
-        didUse = GetSizer()->InformFirstDirection(direction,size,availableOtherDir);
-        if (didUse)
-            m_minSize = GetSizer()->CalcMin();
+        const wxSize minSize = GetSizer()->CalcMinSizeFromKnownDirection
+                                           (
+                                             direction,
+                                             size,
+                                             availableOtherDir
+                                           );
+
+        if (minSize != wxDefaultSize)
+        {
+            m_minSize = minSize;
+            didUse = true;
+        }
     }
     else if (IsWindow())
     {
-        didUse =  GetWindow()->InformFirstDirection(direction,size,availableOtherDir);
-        if (didUse)
-            m_minSize = m_window->GetEffectiveMinSize();
+        const wxSize minSize = GetWindow()->GetMinSizeFromKnownDirection
+                                            (
+                                             direction,
+                                             size,
+                                             availableOtherDir
+                                            );
+
+        if (minSize != wxDefaultSize)
+        {
+            m_minSize = minSize;
+            didUse = true;
+        }
 
         // This information is useful for items with wxSHAPED flag, since
         // we can request an optimal min size for such an item. Even if
@@ -556,7 +656,7 @@ bool wxSizerItem::InformFirstDirection(int direction, int size, int availableOth
         {
             if ( m_ratio != 0 )
             {
-                wxCHECK_MSG( m_proportion==0, false, wxT("Shaped item, non-zero proportion in wxSizerItem::InformFirstDirection()") );
+                wxCHECK_MSG( m_proportion==0, false, wxT("Shaped item, non-zero proportion in wxSizerItem::CalcMinSizeFromKnownDirection()") );
                 if ( direction == wxHORIZONTAL )
                 {
                     // Clip size so that we don't take too much
@@ -964,7 +1064,7 @@ bool wxSizer::Detach( wxSizer *sizer )
     return false;
 }
 
-bool wxSizer::Detach( wxWindow *window )
+bool wxSizer::Detach( wxWindowBase *window )
 {
     wxASSERT_MSG( window, wxT("Detaching null window") );
 
@@ -1001,6 +1101,23 @@ bool wxSizer::Detach( int index )
     delete item;
     m_children.Erase( node );
     return true;
+}
+
+wxSizerItem *wxSizer::DetachItem(size_t index)
+{
+    const auto node = GetChildNode(index);
+    if ( !node )
+        return nullptr;
+
+    wxSizerItem *item = node->GetData();
+
+    wxWindow *window = item->GetWindow();
+    if ( window != nullptr )
+        window->SetContainingSizer(nullptr);
+
+    m_children.Erase( node );
+
+    return item;
 }
 
 bool wxSizer::Replace( wxWindow *oldwin, wxWindow *newwin, bool recursive )
@@ -1227,6 +1344,21 @@ wxSize wxSizer::GetMinSize()
     if (ret.x < m_minSize.x) ret.x = m_minSize.x;
     if (ret.y < m_minSize.y) ret.y = m_minSize.y;
     return ret;
+}
+
+wxSize
+wxSizer::CalcMinSizeFromKnownDirection(int direction,
+                                       int size,
+                                       int availableOtherDir)
+{
+    // For compatibility, call InformFirstDirection().
+    if ( !InformFirstDirection(direction, size, availableOtherDir) )
+        return wxDefaultSize;
+
+    // Old code overriding InformFirstDirection() must have stored the values
+    // passed to it internally, so call its CalcMin() again to recalculate the
+    // minimal size using them.
+    return CalcMin();
 }
 
 void wxSizer::DoSetMinSize( int width, int height )
@@ -1487,6 +1619,46 @@ bool wxSizer::IsShown( size_t index ) const
     return node->GetData()->IsShown();
 }
 
+#ifndef wxHAS_DPI_INDEPENDENT_PIXELS
+
+// Recursively update the sizer and any child sizers and spacers.
+void wxSizer::UpdateOnDPIChange(wxSize oldDPI, wxSize newDPI)
+{
+    m_minSize = wxRescaleCoord(m_minSize).From(oldDPI).To(newDPI);
+
+    for ( wxSizerItemList::compatibility_iterator
+            node = GetChildren().GetFirst();
+            node;
+            node = node->GetNext() )
+    {
+        wxSizerItem* sizerItem = node->GetData();
+
+        int border = sizerItem->GetBorder();
+        border = wxRescaleCoord(border).From(oldDPI).To(newDPI);
+        sizerItem->SetBorder(border);
+
+        // only scale sizers and spacers, not windows
+        if ( sizerItem->IsSizer() || sizerItem->IsSpacer() )
+        {
+            wxSize min = sizerItem->GetMinSize();
+            min = wxRescaleCoord(min).From(oldDPI).To(newDPI);
+            sizerItem->SetMinSize(min);
+
+            if ( sizerItem->IsSpacer() )
+            {
+                wxSize size = sizerItem->GetSize();
+                size = wxRescaleCoord(size).From(oldDPI).To(newDPI);
+                sizerItem->SetDimension(wxDefaultPosition, size);
+            }
+
+            // Update any child sizers if this is a sizer
+            if ( wxSizer* childSizer = sizerItem->GetSizer() )
+                childSizer->UpdateOnDPIChange(oldDPI, newDPI);
+        }
+    }
+}
+
+#endif // !wxHAS_DPI_INDEPENDENT_PIXELS
 
 //---------------------------------------------------------------------------
 // wxGridSizer
@@ -1715,6 +1887,19 @@ void wxGridSizer::SetItemBounds( wxSizerItem *item, int x, int y, int w, int h )
 
     item->SetDimension(pt, sz);
 }
+
+#ifndef wxHAS_DPI_INDEPENDENT_PIXELS
+
+// Recursively update the sizer and any child sizers and spacers.
+void wxGridSizer::UpdateOnDPIChange(wxSize oldDPI, wxSize newDPI)
+{
+    m_vgap = wxRescaleCoord(m_vgap).From(oldDPI).To(newDPI);
+    m_hgap = wxRescaleCoord(m_hgap).From(oldDPI).To(newDPI);
+
+    wxSizer::UpdateOnDPIChange(oldDPI, newDPI);
+}
+
+#endif // !wxHAS_DPI_INDEPENDENT_PIXELS
 
 //---------------------------------------------------------------------------
 // wxFlexGridSizer
@@ -2440,7 +2625,7 @@ void wxBoxSizer::RepositionChildren(const wxSize& minSize)
             if ( propItem )
             {
                 // is the desired size of this item big enough?
-                if ( (remaining*propItem)/totalProportion >= minMajor )
+                if ( wxMulDivInt32(remaining, propItem, totalProportion) >= minMajor )
                 {
                     // yes, it is, we'll determine the real size of this
                     // item later, for now just leave it as wxDefaultCoord
@@ -2537,7 +2722,7 @@ void wxBoxSizer::RepositionChildren(const wxSize& minSize)
             if ( majorSizes[n] == wxDefaultCoord )
             {
                 const int propItem = item->GetProportion();
-                majorSizes[n] = (remaining*propItem)/totalProportion;
+                majorSizes[n] = wxMulDivInt32(remaining, propItem, totalProportion);
 
                 remaining -= majorSizes[n];
                 totalProportion -= propItem;
@@ -2663,17 +2848,12 @@ wxSize wxBoxSizer::CalcMin()
     return minSize;
 }
 
-bool
-wxBoxSizer::InformFirstDirection(int direction, int size, int availableOtherDir)
-{
-    // In principle, we could propagate the information about the size in the
-    // sizer major direction too, but this would require refactoring CalcMin()
-    // to determine the actual sizes all our items would have with the given
-    // size and we don't do this yet, so for now handle only the simpler case
-    // of informing all our items about their size in the orthogonal direction.
-    if ( direction == GetOrientation() )
-        return false;
+wxSize
+wxBoxSizer::CalcMinSizeFromKnownDirection(int direction,
+                                          int size,
+                                          int availableOtherDir)
 
+{
     bool didUse = false;
 
     for ( wxSizerItem* item: m_children )
@@ -2681,7 +2861,11 @@ wxBoxSizer::InformFirstDirection(int direction, int size, int availableOtherDir)
         didUse |= item->InformFirstDirection(direction, size, availableOtherDir);
     }
 
-    return didUse;
+    if ( !didUse )
+        return wxDefaultSize;
+
+    // Recalculate the min size now that items had a chance to adjust.
+    return CalcMin();
 }
 
 //---------------------------------------------------------------------------
@@ -2756,17 +2940,6 @@ bool wxStaticBoxSizer::CheckIfNonBoxChild(wxWindow* win) const
                "as child of its wxStaticBox and not of %s.",
                wxDumpWindow(win),
                wxDumpWindow(win->GetParent()));
-
-#if defined(__WXMSW__) && !defined(__WXUNIVERSAL__)
-    // Additionally, under MSW the windows inside a static box are not
-    // drawn at all when compositing is used, so we have to disable it.
-    //
-    // An alternative could be to Reparent() the window to the static
-    // box, but it might break the existing code and as we only allow
-    // this for compatibility in the first place, it seems better not
-    // to risk it.
-    win->MSWDisableComposited();
-#endif // __WXMSW__ && !__WXUNIVERSAL__
 
     return true;
 }
@@ -2901,7 +3074,7 @@ bool wxStaticBoxSizer::AreAnyItemsShown() const
     return m_staticBox->IsShown();
 }
 
-bool wxStaticBoxSizer::Detach( wxWindow *window )
+bool wxStaticBoxSizer::Detach( wxWindowBase *window )
 {
     // avoid deleting m_staticBox in our dtor if it's being detached from the
     // sizer (which can happen because it's being already destroyed for

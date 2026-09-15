@@ -174,7 +174,7 @@ public:
         The insertion point is set to the start of the control (i.e. position
         0) by this function.
 
-        This functions does not generate the @c wxEVT_TEXT
+        This function does not generate the @c wxEVT_TEXT
         event but otherwise is identical to SetValue().
 
         See @ref overview_events_prog for more information.
@@ -410,7 +410,13 @@ public:
         event is sent to notify the program about it (giving it the possibility
         to show an explanatory message, for example) and the extra input is discarded.
 
-        Note that in wxGTK this function may only be used with single line text controls.
+        @note In wxMSW the program may write more than @a len characters into
+        the control programmatically, even if the user is not able to enter
+        more than @a len characters. This is, however, not the case in the
+        other ports and it is recommended not to rely on this behaviour.
+
+        @note This function may be used with single line text controls in all
+        ports but only works for multi-line text controls in wxMSW and wxGTK.
     */
     virtual void SetMaxLength(unsigned long len);
 

@@ -20,6 +20,7 @@
 #include "wx/msgdlg.h"
 #include "wx/button.h"
 #include "wx/dcclient.h"
+#include "wx/settings.h"
 #include "wx/timer.h"
 
 #include "wx/datetime.h"
@@ -79,7 +80,7 @@ protected:
             s << '\t' << reply[n] << '\n';
         }
 
-        wxLogMessage("%s", s);
+        wxLogMessage(s);
 
         return true;
     }
@@ -118,7 +119,7 @@ public:
 // just some functions to get a slightly deeper stack trace
 static void bar(const char *p)
 {
-    char *pc = 0;
+    char *pc = nullptr;
     *pc = *p;
 
     printf("bar: %s\n", p);
@@ -317,7 +318,7 @@ void MyFrame::OnListLoadedDLLs(wxCommandEvent& WXUNUSED(event))
             return;
 
         const wxDynamicLibraryDetails& det = loaded[sel];
-        void *addr = 0;
+        void *addr = nullptr;
         size_t len = 0;
         det.GetAddress(&addr, &len);
         wxLogMessage("Full path is \"%s\", memory range %p:%p, version \"%s\"",
@@ -381,6 +382,8 @@ void MyFrame::OnAbout(wxCommandEvent& WXUNUSED(event))
 void MyFrame::OnPaint(wxPaintEvent& WXUNUSED(event))
 {
     wxPaintDC dc(this);
+    const wxPen pen(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT), FromDIP(1));
+    const wxDCPenChanger penChanger(dc, pen);
     const wxSize size = GetClientSize();
     for ( wxCoord x = 0; x < size.x; x += size.x/m_numLines )
         dc.DrawLine(x, 0, x, size.y);

@@ -175,30 +175,30 @@ GtkIconSize FindClosestIconSize(const wxSize& size)
         s_sizes[3].icon = GTK_ICON_SIZE_BUTTON;
         s_sizes[4].icon = GTK_ICON_SIZE_DND;
         s_sizes[5].icon = GTK_ICON_SIZE_DIALOG;
-        for (size_t i = 0; i < NUM_SIZES; i++)
+        for ( auto& iconSize : s_sizes )
         {
-            gtk_icon_size_lookup(s_sizes[i].icon,
-                                 &s_sizes[i].x, &s_sizes[i].y);
+            gtk_icon_size_lookup(iconSize.icon,
+                                 &iconSize.x, &iconSize.y);
         }
         s_sizesInitialized = true;
     }
 
     GtkIconSize best = GTK_ICON_SIZE_DIALOG; // presumably largest
     unsigned distance = INT_MAX;
-    for (size_t i = 0; i < NUM_SIZES; i++)
+    for ( auto& iconSize : s_sizes )
     {
         // only use larger bitmaps, scaling down looks better than scaling up:
-        if (size.x > s_sizes[i].x || size.y > s_sizes[i].y)
+        if (size.x > iconSize.x || size.y > iconSize.y)
             continue;
 
-        unsigned dist = (size.x - s_sizes[i].x) * (size.x - s_sizes[i].x) +
-                        (size.y - s_sizes[i].y) * (size.y - s_sizes[i].y);
+        unsigned dist = (size.x - iconSize.x) * (size.x - iconSize.x) +
+                        (size.y - iconSize.y) * (size.y - iconSize.y);
         if (dist == 0)
-            return s_sizes[i].icon;
+            return iconSize.icon;
         else if (dist < distance)
         {
             distance = dist;
-            best = s_sizes[i].icon;
+            best = iconSize.icon;
         }
     }
     return best;
@@ -315,7 +315,6 @@ wxIconBundle
 wxGTK2ArtProvider::CreateIconBundle(const wxArtID& id,
                                     const wxArtClient& WXUNUSED(client))
 {
-    wxIconBundle bundle;
     const wxString stockid = wxArtIDToStock(id);
 
 #ifndef __WXGTK4__
@@ -331,43 +330,39 @@ wxGTK2ArtProvider::CreateIconBundle(const wxArtID& id,
 #endif
     if ( iconset )
     {
-        GtkIconSize *sizes;
+        wxGlibPtr<GtkIconSize> sizes;
         gint n_sizes;
-        gtk_icon_set_get_sizes(iconset, &sizes, &n_sizes);
-        bundle = DoCreateIconBundle
+        gtk_icon_set_get_sizes(iconset, sizes.Out(), &n_sizes);
+        return DoCreateIconBundle
                               (
                                   stockid.utf8_str(),
-                                  sizes, sizes + n_sizes,
+                                  sizes.get(), sizes.get() + n_sizes,
                                   &CreateStockIcon
                               );
-        g_free(sizes);
-        return bundle;
     }
     wxGCC_WARNING_RESTORE()
 #endif // !__WXGTK4__
 
     // otherwise try icon themes
-    gint *sizes = gtk_icon_theme_get_icon_sizes
+    wxGlibPtr<gint> sizes(gtk_icon_theme_get_icon_sizes
                   (
                       gtk_icon_theme_get_default(),
                       stockid.utf8_str()
-                  );
+                  ));
     if ( !sizes )
-        return bundle;
+        return {};
 
-    gint *last = sizes;
+    const gint* first = sizes;
+    const gint* last = first;
     while ( *last )
         last++;
 
-    bundle = DoCreateIconBundle
+    return DoCreateIconBundle
                           (
                               stockid.utf8_str(),
-                              sizes, last,
+                              first, last,
                               &CreateThemeIcon
                           );
-    g_free(sizes);
-
-    return bundle;
 }
 
 // ----------------------------------------------------------------------------

@@ -75,6 +75,19 @@ public:
     virtual wxString GetPageSource() const override;
     virtual wxString GetPageText() const override;
     virtual void Print() override;
+#if wxUSE_PRINTING_ARCHITECTURE
+#if wxUSE_WEBVIEW_WEBKIT2
+    virtual void Print(const wxPrintData& printData, int flags = wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER) override;
+#else
+    using wxWebView::Print;
+#endif
+#endif
+#if wxUSE_WEBVIEW_WEBKIT2
+    virtual bool PrintToPDF(const wxString& filePath) override;
+#if wxUSE_PRINTING_ARCHITECTURE
+    virtual bool PrintToPDF(const wxString& filePath, const wxPrintData& printData) override;
+#endif
+#endif
     virtual bool IsBusy() const override;
 #if wxUSE_WEBVIEW_WEBKIT2
     virtual void EnableAccessToDevTools(bool enable = true) override;
@@ -126,6 +139,8 @@ public:
     virtual bool AddUserScript(const wxString& javascript,
         wxWebViewUserScriptInjectionTime injectionTime = wxWEBVIEW_INJECT_AT_DOCUMENT_START) override;
     virtual void RemoveAllUserScripts() override;
+    virtual bool ClearBrowsingData(int types = wxWEBVIEW_BROWSING_DATA_ALL,
+                                   wxDateTime since = {}) override;
 #else
     virtual bool RunScript(const wxString& javascript, wxString* output = nullptr) const override;
 #endif
@@ -156,6 +171,9 @@ public:
 #if wxUSE_WEBVIEW_WEBKIT2
     // This method needs to be public to make it callable from a callback
     void ProcessJavaScriptResult(GAsyncResult *res, wxWebKitRunScriptParams* params) const;
+
+    // Make the configuration accessible from callbacks
+    wxWebViewConfiguration m_config;
 #endif
 
 protected:
@@ -198,7 +216,6 @@ private:
     //Used for webkit2 extension
     GDBusServer *m_dbusServer;
     GDBusProxy *m_extension;
-    wxWebViewConfiguration m_config;
 
     static wxSharedPtr<wxWebViewHistoryItem>
     CreateHistoryItemFromWKItem(WebKitBackForwardListItem* gtkitem);
@@ -226,9 +243,10 @@ public:
             return nullptr;
     }
 
+    virtual wxWebViewConfiguration CreateConfiguration() override;
+
 #if wxUSE_WEBVIEW_WEBKIT2
     virtual wxVersionInfo GetVersionInfo(wxVersionContext context) override;
-    virtual wxWebViewConfiguration CreateConfiguration() override;
     virtual wxWebView* CreateWithConfig(const wxWebViewConfiguration& config) override;
 #endif
 };

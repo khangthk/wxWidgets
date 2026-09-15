@@ -25,6 +25,9 @@
     #include "wx/log.h"
 #endif // WX_PRECOMP
 
+// OpenGLES API is deprecated by Apple
+#define GLES_SILENCE_DEPRECATION
+
 #include "wx/glcanvas.h"
 
 // DLL options compatibility check:
@@ -276,7 +279,7 @@ bool wxGLCanvasBase::ParseAttribList(const int *attribList,
                 src++;
                 break;
 
-            case wx_GL_COMPAT_PROFILE:
+            case WX_GL_COMPAT_PROFILE:
                 if ( ctxAttrs )
                     ctxAttrs->CompatibilityProfile();
                 break;

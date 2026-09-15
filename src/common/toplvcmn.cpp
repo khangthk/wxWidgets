@@ -27,6 +27,7 @@
 #endif // WX_PRECOMP
 
 #include "wx/display.h"
+#include "wx/modalhook.h"
 
 #include "wx/private/tlwgeom.h"
 
@@ -121,12 +122,9 @@ bool wxTopLevelWindowBase::Destroy()
     // any more as no events will be sent to the hidden window and without idle
     // events we won't prune wxPendingDelete list and the application won't
     // terminate
-    for ( wxWindowList::const_iterator i = wxTopLevelWindows.begin(),
-                                     end = wxTopLevelWindows.end();
-          i != end;
-          ++i )
+    for ( auto* item : wxTopLevelWindows )
     {
-        wxTopLevelWindow * const win = static_cast<wxTopLevelWindow *>(*i);
+        wxTopLevelWindow * const win = static_cast<wxTopLevelWindow *>(item);
         if ( win != this && win->IsShown() )
         {
             // there remains at least one other visible TLW, we can hide this
@@ -311,22 +309,40 @@ void wxTopLevelWindowBase::DoCentre(int dir)
 }
 
 // ----------------------------------------------------------------------------
+// Default item management
+// ----------------------------------------------------------------------------
+
+wxWindow* wxTopLevelWindowBase::SetDefaultItem(wxWindow* win)
+{
+    wxWindow* const old = GetDefaultItem();
+    m_winDefault = win;
+    return old;
+}
+
+wxWindow* wxTopLevelWindowBase::SetTmpDefaultItem(wxWindow* win)
+{
+    wxWindow* const old = GetDefaultItem();
+    m_winTmpDefault = win;
+    return old;
+}
+
+// ----------------------------------------------------------------------------
 // Saving/restoring geometry
 // ----------------------------------------------------------------------------
 
-bool wxTopLevelWindowBase::SaveGeometry(const GeometrySerializer& ser) const
+bool wxTopLevelWindowBase::SaveGeometry(GeometryStore& store) const
 {
     wxTLWGeometry geom;
     if ( !geom.GetFrom(static_cast<const wxTopLevelWindow*>(this)) )
         return false;
 
-    return geom.Save(ser);
+    return geom.Save(store);
 }
 
-bool wxTopLevelWindowBase::RestoreToGeometry(GeometrySerializer& ser)
+bool wxTopLevelWindowBase::RestoreToGeometry(const GeometryStore& store)
 {
     wxTLWGeometry geom;
-    if ( !geom.Restore(ser) )
+    if ( !geom.Restore(store) )
         return false;
 
     return geom.ApplyTo(static_cast<wxTopLevelWindow*>(this));
@@ -486,6 +502,20 @@ bool wxTopLevelWindowBase::Layout()
     return false;
 }
 
+void wxTopLevelWindowBase::Fit()
+{
+    if ( !UsesAutoLayout() )
+    {
+        if ( wxWindow* const child = GetUniqueChild() )
+        {
+            SetClientSize(child->GetBestSize());
+            return;
+        }
+    }
+
+    return wxNonOwnedWindow::Fit();
+}
+
 wxSize wxTopLevelWindowBase::DoGetBestClientSize() const
 {
     // The logic here parallels that of Layout() above.
@@ -499,8 +529,16 @@ wxSize wxTopLevelWindowBase::DoGetBestClientSize() const
 }
 
 // The default implementation for the close window event.
-void wxTopLevelWindowBase::OnCloseWindow(wxCloseEvent& WXUNUSED(event))
+void wxTopLevelWindowBase::OnCloseWindow(wxCloseEvent& event)
 {
+    if ( event.CanVeto() && wxModalDialogHook::GetOpenCount() )
+    {
+        // We can't close the window if there are any app-modal dialogs still
+        // shown.
+        event.Veto();
+        return;
+    }
+
     Destroy();
 }
 

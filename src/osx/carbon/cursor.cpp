@@ -211,6 +211,8 @@ wxCursorRefData::wxCursorRefData(const wxCursorRefData& cursor) : wxGDIRefData()
 
 #if wxOSX_USE_COCOA
     m_hCursor = (WX_NSCursor) wxMacCocoaRetain(cursor.m_hCursor);
+#else
+    wxUnusedVar(cursor);
 #endif
 }
 
@@ -224,6 +226,11 @@ wxCursorRefData::~wxCursorRefData()
 
 wxCursor::wxCursor()
 {
+}
+
+wxCursor::wxCursor(const wxBitmap& bitmap, int hotSpotX, int hotSpotY)
+{
+    InitFromBitmap(bitmap, hotSpotX, hotSpotY);
 }
 
 #if wxUSE_IMAGE
@@ -253,22 +260,31 @@ WXHCURSOR wxCursor::GetHCURSOR() const
     return (M_CURSORDATA ? M_CURSORDATA->m_hCursor : nullptr);
 }
 
-#if wxUSE_IMAGE
-
-void wxCursor::InitFromImage(const wxImage & image)
+void wxCursor::InitFromBitmap(const wxBitmap& bmp, int hotSpotX, int hotSpotY)
 {
     m_refData = new wxCursorRefData;
-    int hotSpotX = image.GetOptionInt(wxIMAGE_OPTION_CUR_HOTSPOT_X);
-    int hotSpotY = image.GetOptionInt(wxIMAGE_OPTION_CUR_HOTSPOT_Y);
+
 #if wxOSX_USE_COCOA
-    wxBitmap bmp( image );
     CGImageRef cgimage = bmp.CreateCGImage();
     if ( cgimage )
     {
         M_CURSORDATA->m_hCursor = wxMacCocoaCreateCursorFromCGImage( cgimage, hotSpotX, hotSpotY );
         CFRelease( cgimage );
     }
+#else
+    wxUnusedVar(bmp);
+    wxUnusedVar(hotSpotX);
+    wxUnusedVar(hotSpotY);
 #endif
+}
+
+#if wxUSE_IMAGE
+
+void wxCursor::InitFromImage(const wxImage & image)
+{
+    int hotSpotX = image.GetOptionInt(wxIMAGE_OPTION_CUR_HOTSPOT_X);
+    int hotSpotY = image.GetOptionInt(wxIMAGE_OPTION_CUR_HOTSPOT_Y);
+    InitFromBitmap(image, hotSpotX, hotSpotY);
 }
 
 #endif //wxUSE_IMAGE
@@ -329,6 +345,8 @@ void wxCursor::InitFromStock(wxStockCursor cursor_type)
     m_refData = new wxCursorRefData;
 #if wxOSX_USE_COCOA
     M_CURSORDATA->m_hCursor = wxMacCocoaCreateStockCursor( cursor_type );
+#else
+    wxUnusedVar(cursor_type);
 #endif
 }
 
@@ -341,10 +359,21 @@ void wxCursor::MacInstall() const
 #endif
 }
 
+wxPoint wxCursor::GetHotSpot() const
+{
+#if wxOSX_USE_COCOA
+    if ( IsOk() )
+        return wxMacCocoaGetCursorHotSpot( M_CURSORDATA->m_hCursor );
+#endif
+
+    return wxDefaultPosition;
+}
+
 // Global cursor setting
 wxCursor gGlobalCursor;
-void wxSetCursor(const wxCursor& cursor)
+void wxSetCursor( const wxCursorBundle& cursors )
 {
+    wxCursor cursor = cursors.GetCursorForMainWindow();
     cursor.MacInstall() ;
     gGlobalCursor = cursor;
 }

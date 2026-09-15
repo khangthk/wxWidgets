@@ -305,7 +305,7 @@ bool wxHtmlHelpController::DisplaySection(int sectionNo)
 bool wxHtmlHelpController::DisplayTextPopup(const wxString& text, const wxPoint& WXUNUSED(pos))
 {
 #if wxUSE_TIPWINDOW
-    static wxTipWindow* s_tipWindow = nullptr;
+    static wxTipWindow::Ref s_tipWindow;
 
     if (s_tipWindow)
     {
@@ -318,7 +318,7 @@ bool wxHtmlHelpController::DisplayTextPopup(const wxString& text, const wxPoint&
 
     if ( !text.empty() )
     {
-        s_tipWindow = new wxTipWindow(wxTheApp->GetTopWindow(), text, 100, & s_tipWindow);
+        s_tipWindow = wxTipWindow::New(wxTheApp->GetTopWindow(), text, 100);
 
         return true;
     }
@@ -405,7 +405,8 @@ bool wxHtmlHelpController::Display(const wxString& x)
 {
     CreateHelpWindow();
     bool success = m_helpWindow->Display(x);
-    MakeModalIfNeeded();
+    if ( success )
+        MakeModalIfNeeded();
     return success;
 }
 
@@ -413,7 +414,8 @@ bool wxHtmlHelpController::Display(int id)
 {
     CreateHelpWindow();
     bool success = m_helpWindow->Display(id);
-    MakeModalIfNeeded();
+    if ( success )
+        MakeModalIfNeeded();
     return success;
 }
 
@@ -421,7 +423,8 @@ bool wxHtmlHelpController::DisplayContents()
 {
     CreateHelpWindow();
     bool success = m_helpWindow->DisplayContents();
-    MakeModalIfNeeded();
+    if ( success )
+        MakeModalIfNeeded();
     return success;
 }
 
@@ -429,7 +432,8 @@ bool wxHtmlHelpController::DisplayIndex()
 {
     CreateHelpWindow();
     bool success = m_helpWindow->DisplayIndex();
-    MakeModalIfNeeded();
+    if ( success )
+        MakeModalIfNeeded();
     return success;
 }
 
@@ -438,7 +442,8 @@ bool wxHtmlHelpController::KeywordSearch(const wxString& keyword,
 {
     CreateHelpWindow();
     bool success = m_helpWindow->KeywordSearch(keyword, mode);
-    MakeModalIfNeeded();
+    if ( success )
+        MakeModalIfNeeded();
     return success;
 }
 

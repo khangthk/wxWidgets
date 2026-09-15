@@ -162,6 +162,44 @@ enum wxWebViewIE_EmulationLevel
 };
 
 /**
+    Types of browsing data that can be cleared.
+
+    Note that different constants can be combined using the bitwise OR
+    operator and that @c wxWEBVIEW_BROWSING_DATA_ALL is a shorthand for
+    specifying all of them.
+
+    @since 3.3.0
+*/
+enum wxWebViewBrowsingDataTypes
+{
+    /** All stored and session cookies. */
+    wxWEBVIEW_BROWSING_DATA_COOKIES = 0x01,
+    /** Cached data from disk and memory. */
+    wxWEBVIEW_BROWSING_DATA_CACHE = 0x02,
+    /** All DOM Storage: File Systems, Indexed DB, Local Storage, Web SQL, Cache Storage. */
+    wxWEBVIEW_BROWSING_DATA_DOM_STORAGE = 0x04,
+    /** Other browsing data like history, settings, auto fill, passwords, etc. */
+    wxWEBVIEW_BROWSING_DATA_OTHER = 0x08,
+    /** All browsing data, including data corresponding to all the other constants. */
+    wxWEBVIEW_BROWSING_DATA_ALL = 0x0f
+};
+
+/**
+    Types of settings that can be applied to print operations.
+
+    @since 3.3.3
+*/
+enum wxWebViewPrintFlags
+{
+    /** Do not apply any custom settings. */
+    wxWEBVIEW_PRINT_DEFAULT = 0,
+    /** Explicitly prevents headers and footers from appearing in print operations.
+        This currently only applies to the Edge backend;
+        other backends do not provide headers and footers. */
+    wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER = 0x0001
+};
+
+/**
     A class describing the window information for a new child window.
 
     An object of this class can be obtained using wxWebViewEvent::GetTargetWindowFeatures()
@@ -313,12 +351,12 @@ public:
 
             #if defined(__WXMSW__)
             ICoreWebView2EnvironmentOptions* webViewOptions =
-                (ICoreWebView2EnvironmentOptions*) config->GetNativeConfiguration();
-            webViewOptions->put_AdditionalBrowserArguments("--autoplay-policy=no-user-gesture-required");
+                (ICoreWebView2EnvironmentOptions*) config.GetNativeConfiguration();
+            webViewOptions->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required");
             #elif defined(__WXOSX__)
             WKWebViewConfiguration* webViewConfiguration =
-                (WKWebViewConfiguration*) config->GetNativeConfiguration();
-            webViewConfiguration.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
+                (WKWebViewConfiguration*) config.GetNativeConfiguration();
+            webViewConfiguration->mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
             #endif
 
             wxWebView* webView = wxWebView::New(config);
@@ -372,6 +410,27 @@ public:
         @since 3.3.0
      */
     bool EnablePersistentStorage(bool enable);
+
+    /**
+        Disables GPU hardware acceleration for all subsequently created web
+        views.
+
+        This can be useful when diagnosing rendering issues or when targeting
+        machines with older or unsupported video cards.
+
+        This must be called @b before creating any wxWebView instance. Once
+        called, GPU acceleration will remain disabled for the lifetime of the
+        application.
+
+        @return @true if the setting was applied successfully, @false if it is
+            not supported by the currently used backend.
+
+        @note This is currently only implemented for the Edge (MSW) and
+            WebKit2GTK (GTK) backends.
+
+        @since 3.3.3
+    */
+    static bool DisableGPUAcceleration();
 };
 
 
@@ -672,7 +731,9 @@ public:
     wxWebViewHandler(const wxString& scheme);
 
     /**
-        @return A pointer to the file represented by @c uri.
+        @return A pointer to the file represented by @c uri, or @NULL. The
+        caller takes ownership of the returned pointer and is responsible for
+        deleting it.
     */
     virtual wxFSFile* GetFile(const wxString &uri);
 
@@ -720,7 +781,7 @@ public:
 
     /**
         Implementing this method allows for more control over requests from
-        the backend then GetFile(). More details of the request are available
+        the backend than GetFile(). More details of the request are available
         from the request object which allows access to URL, method, postdata
         and headers.
 
@@ -762,7 +823,7 @@ public:
         }
         @endcode
 
-        @note This is only used by macOS and the Edge backend.
+        @note This is only used by macOS, Chromium, and the Edge backend.
 
         @see GetFile()
         @since 3.3.0
@@ -783,7 +844,7 @@ public:
     @section backend_descriptions Backend Descriptions
 
     This class supports using multiple backends, corresponding to different
-    implementations of the same functionality. wxWebViewChrome is available
+    implementations of the same functionality. wxWebViewChromium is available
     on all three major platforms and each platform also has its own default
     native backend. Backends are identified by their names, documented in
     the backend descriptions below.
@@ -816,19 +877,21 @@ public:
     wxWebViewHandler::SetVirtualHost() for more details on how to access
     handler provided URLs.
 
-    This backend is not enabled by default, to build it follow these steps:
-    - With CMake just enable @c wxUSE_WEBVIEW_EDGE
+    This backend is enabled by default only when using CMake. To build it follow these steps:
     - When not using CMake:
         - Download the <a href="https://aka.ms/webviewnuget">WebView2 SDK</a>
-        nuget package (Version 1.0.864.35 or newer)
-        - Extract the package (it's a zip archive) to @c wxWidgets/3rdparty/webview2
+        NuGet package (Version 1.0.3485.44 or newer)
+        - Extract the package (it's a zip archive) to @c WX_SRCDIR/3rdparty/webview2
         (you should have @c 3rdparty/webview2/build/native/include/WebView2.h
         file after unpacking it)
         - Enable @c wxUSE_WEBVIEW_EDGE in @c setup.h
+    - When using CMake, the backend is enabled by default. It can be disabled by setting
+      @c wxUSE_WEBVIEW_EDGE to @c OFF. If a WebView2 SDK is found in @c WX_SRCDIR/3rdparty/webview2
+      (see the bullet above), that SDK is used. Otherwise, the SDK is downloaded and extracted
+      by CMake during the configure phase (into directory @c WX_BUILDDIR/libs/webview/packages)
     - Build wxWidgets webview library
-    - Copy @c WebView2Loader.dll from the subdirectory corresponding to the
-      architecture used (x86 or x64) of @c wxWidgets/3rdparty/webview2/build/
-      to your applications executable
+    - From the WebView2 SDK @c build subdirectory copy @c WebView2Loader.dll corresponding
+      to the architecture used (x86 or x64) to the directory with your application executable
     - At runtime you can use wxWebView::IsBackendAvailable() to check if the
       backend can be used (it will be available if @c WebView2Loader.dll can be
       loaded and Edge (Chromium) is installed)
@@ -878,6 +941,11 @@ public:
     The predefined @c wxWebViewBackendWebKit constant contains the name of this
     backend.
 
+    @note WebKitGTK 2.42+ may fail to render content due to DMA-BUF hardware
+    acceleration issues. This can be resolved by calling
+    wxWebViewConfiguration::DisableGPUAcceleration() before creating a
+    @c wxWebView instance.
+
     @subsection wxWEBVIEW_WEBKIT_MACOS wxWEBVIEW_WEBKIT (macOS)
 
     The macOS WebKit backend uses Apple's
@@ -892,7 +960,7 @@ public:
     connections (this includes HTTP and unverified HTTPS). You have to include
     additional fields in your Info.plist to enable such connections.
     For further details see the documentation on NSAppTransportSecurity
-    <a target=_new href="https://developer.apple.com/documentation/bundleresources/information_property_list/nsapptransportsecurity">here</a>
+    <a target="_blank" href="https://developer.apple.com/documentation/bundleresources/information_property_list/nsapptransportsecurity">here</a>
 
     The predefined @c wxWebViewBackendWebKit constant contains the name of this
     backend.
@@ -989,6 +1057,16 @@ public:
         Process a @c wxEVT_WEBVIEW_SCRIPT_RESULT event.
         Available only in wxWidgets 3.1.6 or later. For usage details see
         RunScriptAsync().
+    @event{wxEVT_WEBVIEW_BROWSING_DATA_CLEARED(id, func)}
+        Process a @c wxEVT_WEBVIEW_BROWSING_DATA_CLEARED event
+        only available in wxWidgets 3.3.0 or later. For usage details see
+        ClearBrowsingData().
+    @event{EVT_WEBVIEW_PDF_SAVED(id, func)}
+        Process a @c wxEVT_WEBVIEW_PDF_SAVED event, generated when a
+        PrintToPDF() operation completes. Use wxWebViewEvent::GetURL() to
+        retrieve the output file path and wxWebViewEvent::IsError() to check
+        whether the save succeeded.
+        Only available in wxWidgets 3.3.3 or later.
     @endEventTable
 
     @since 2.9.3
@@ -1223,10 +1301,87 @@ public:
     virtual void LoadURL(const wxString& url) = 0;
 
     /**
-        Opens a print dialog so that the user may print the currently
-        displayed page.
+        Opens a print dialog (with the backend's default settings) so that the
+        user may print the currently displayed page.
     */
     virtual void Print() = 0;
+
+    /**
+        Prints the currently displayed page using the given print settings.
+
+        The @a printData parameter allows specifying paper size, orientation,
+        number of copies, duplex mode and colour/greyscale output.
+
+        The @a flags parameter is a combination of wxWebViewPrintFlags values.
+        By default, headers and footers are shown (where supported by the
+        backend). Pass @c wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER to suppress them.
+
+        This overload is only available when @c wxUSE_PRINTING_ARCHITECTURE is
+        set to 1. Backends that do not support programmatic print settings
+        will fall back to the parameterless Print().
+
+        Currently the Edge backend (MSW) has full support for all wxPrintData
+        settings including header/footer control. The GTK and macOS backends
+        support paper size, orientation, and copies but ignore @a flags.
+        The IE and Chromium backends fall back to Print().
+
+        @param printData
+            The print settings to use.
+        @param flags
+            A combination of wxWebViewPrintFlags values.
+
+        @since 3.3.3
+    */
+    virtual void Print(const wxPrintData& printData,
+                       int flags = wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER);
+
+    /**
+        Saves the currently displayed page as a PDF file to @a filePath.
+
+        This operation is asynchronous. When it completes, a
+        @c wxEVT_WEBVIEW_PDF_SAVED event is generated. Use
+        wxWebViewEvent::GetURL() to retrieve the output file path and
+        wxWebViewEvent::IsError() to check whether the operation succeeded.
+
+        @return @true if the export was started successfully, @false if the
+            backend does not support PDF export or if an error prevented the
+            operation from starting.
+
+        @note Currently implemented on the Edge (MSW), WebKit (macOS 11.0+),
+            and WebKit2GTK (GTK) backends. Returns @false on all other
+            backends.
+
+        @see PrintToPDF(const wxString&, const wxPrintData&)
+
+        @since 3.3.3
+    */
+    virtual bool PrintToPDF(const wxString& filePath);
+
+    /**
+        Saves the currently displayed page as a PDF file using the given print
+        settings.
+
+        This overload allows specifying paper size and orientation via
+        @a printData. Backend support for these settings varies:
+
+        - Edge (MSW): paper size (derived from the wxPrintData paper ID) and
+          orientation are both applied to the output PDF.
+        - macOS: @a printData is not used; this behaves identically to
+          PrintToPDF(const wxString&).
+        - GTK (WebKit2GTK): paper size, orientation, copies, and collation
+          are all applied to the output PDF.
+
+        This overload is only available when @c wxUSE_PRINTING_ARCHITECTURE is
+        set to 1.
+
+        @return @true if the export was started successfully, @false if the
+            backend does not support PDF export.
+
+        @see PrintToPDF(const wxString&)
+
+        @since 3.3.3
+    */
+    virtual bool PrintToPDF(const wxString& filePath, const wxPrintData& printData);
 
     /**
         Registers a custom scheme handler.
@@ -1329,6 +1484,35 @@ public:
     virtual bool SetProxy(const wxString& proxy);
 
     /**
+        Clears the browsing data of the web view.
+
+        This function clears the browsing data of the web view, such as cookies,
+        cache, history, etc. The exact data that is cleared depends on the
+        backend used.
+
+        This operation is asynchronous and may take some time to complete. When finished
+        @c wxEVT_WEBVIEW_BROWSING_DATA_CLEARED event is generated.
+
+        @param types The types of browsing data to clear. By default, it clears
+            all types of browsing data.
+        @param since The time since when the browsing data should be cleared.
+            By default, it clears all browsing data.
+        @return @false if backend doesn't support clearing browsing data or an
+            error occurred. Otherwise, @true is returned and the browsing data
+            will be cleared asynchronously and the application will receive a
+            @c wxEVT_WEBVIEW_BROWSING_DATA_CLEARED event when it is done (or if
+            doing it fails later).
+
+        @since 3.3.0
+
+        @note This is only implemented in the Edge, WebKit2GTK+ and macOS backends.
+
+        @see wxWebViewBrowsingDataTypes
+     */
+    virtual bool ClearBrowsingData(int types = wxWEBVIEW_BROWSING_DATA_ALL,
+                                   wxDateTime since = {});
+
+    /**
         @name Scripting
     */
     /**
@@ -1427,7 +1611,7 @@ public:
         Add a script message handler with the given name.
 
         To use the script message handler from javascript use
-        @c `window.<name>.postMessage(<messageBody>)` where `<name>` corresponds the value
+        `window.<name>.postMessage(<messageBody>)` where `<name>` corresponds the value
         of the name parameter. The `<messageBody>` will be available to the application
         via a @c wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED event.
 
@@ -1981,6 +2165,10 @@ public:
         Process a @c wxEVT_WEBVIEW_SCRIPT_RESULT event
         only available in wxWidgets 3.1.6 or later. For usage details see
         wxWebView::RunScriptAsync().
+    @event{wxEVT_WEBVIEW_BROWSING_DATA_CLEARED(id, func)}
+        Process a @c wxEVT_WEBVIEW_BROWSING_DATA_CLEARED event
+        only available in wxWidgets 3.3.0 or later. For usage details see
+        wxWebView::ClearBrowsingData().
     @endEventTable
 
     @since 2.9.3
@@ -2038,8 +2226,10 @@ public:
     wxWebViewWindowFeatures* GetTargetWindowFeatures() const;
 
     /**
-        Returns @true the script execution failed. Only valid for events of type
-        @c wxEVT_WEBVIEW_SCRIPT_RESULT
+        Returns @true if the operation failed.
+        Only valid for events of type
+        @c wxEVT_WEBVIEW_SCRIPT_RESULT, @c wxEVT_WEBVIEW_BROWSING_DATA_CLEARED
+        and @c wxEVT_WEBVIEW_PDF_SAVED
 
         @since 3.1.6
     */
@@ -2069,3 +2259,5 @@ wxEventType wxEVT_WEBVIEW_FULLSCREEN_CHANGED;
 wxEventType wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED;
 wxEventType wxEVT_WEBVIEW_SCRIPT_RESULT;
 wxEventType wxEVT_WEBVIEW_WINDOW_CLOSE_REQUESTED;
+wxEventType wxEVT_WEBVIEW_BROWSING_DATA_CLEARED;
+wxEventType wxEVT_WEBVIEW_PDF_SAVED;

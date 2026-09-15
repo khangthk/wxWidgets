@@ -185,6 +185,13 @@ used to override this.
  * `--without-libtiff` \n
    Disables TIFF image format code. Don't use libtiff.
 
+ * `--without-libwebp` \n
+   Disables WebP image format code. Don't use libwebp.
+
+ * `--without-nanosvg` \n
+   Disables SVG rasterizing support in wxBitmapBundle. Use neither the system
+   nor the builtin copy of NanoSVG.
+
  * `--without-expat` \n
    Disable XML classes based on Expat parser. Don't use expat library.
 

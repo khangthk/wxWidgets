@@ -118,7 +118,33 @@ enum
       This flag is obviously @b dangerous and should be used with care and
       after asking the user for confirmation.
      */
-    wxPATH_RMDIR_RECURSIVE = 2
+    wxPATH_RMDIR_RECURSIVE = 2,
+
+    /**
+      Delete the specified directory itself and its parent directories if they
+      are empty, recursively.
+
+      With this flag, Rmdir() will delete the parent directory if it becomes
+      empty after the original directory is removed, and then its grandparent
+      directory if it is also empty, and so on, stopping at the first
+      non-empty (or otherwise impossible to remove) ancestor directory.
+
+      This flag can be combined with wxPATH_RMDIR_FULL, in which case the
+      original directory is removed even if it contains (empty)
+      subdirectories, while its ancestors are still only removed if they are
+      found to be empty.
+
+      It can @e not be combined with wxPATH_RMDIR_RECURSIVE, however, as
+      doing this could result in silently removing more than what was asked
+      for: an assertion failure is triggered and @false is returned if this
+      combination is used. If you do need to remove a possibly non-empty
+      directory tree and then prune the now empty ancestors, do it in two
+      steps by calling Rmdir() with wxPATH_RMDIR_RECURSIVE first and then
+      calling it again with wxPATH_RMDIR_PARENTS on the parent directory.
+
+      @since 3.3.4
+     */
+    wxPATH_RMDIR_PARENTS = 4
 };
 
 /**
@@ -869,9 +895,12 @@ public:
         one of the following forms:
 
         - Just a single letter, for the usual drive letter volumes, e.g. @c C.
-        - A share name preceded by a double backslash, e.g. @c \\\\share.
-        - A GUID volume preceded by a double backslash and a question mark,
-          e.g. @c \\\\?\\Volume{12345678-9abc-def0-1234-56789abcdef0}.
+        - A share name preceded by a double backslash, e.g. `\\share`.
+        - The first part of a so-called "Windows NT device" path, also called
+          "extended length" path, in the form of `\\.\X:` or a raw volume path,
+          e.g. `\\?\Volume{12345678-9abc-def0-1234-56789abcdef0}`. Such volumes
+          always start with a double backslash and a question mark. See also
+          IsMSWExtendedLengthPath().
     */
     wxString GetVolume() const;
 
@@ -1032,6 +1061,20 @@ public:
     */
     static bool IsPathSeparator(wxChar ch,
                                 wxPathFormat format = wxPATH_NATIVE);
+
+    /**
+        Returns @true if the path starts with a double backslash and a question
+        mark.
+
+        Such paths are known as "Windows NT device" paths or "extended length"
+        paths and are passed directly to the file system, allowing to access
+        objects not accessible using the normal paths and avoiding the 260
+        character path length restriction.
+
+        @since 3.3.0
+     */
+    static bool IsMSWExtendedLengthPath(const wxString& path,
+                                        wxPathFormat format = wxPATH_NATIVE);
 
     /**
         Returns @true if the volume part of the path is a unique volume name.
@@ -1248,7 +1291,12 @@ public:
             contains subdirectories, provided that there are no files in
             neither this directory nor its subdirectories. If flags contains
             wxPATH_RMDIR_RECURSIVE, then the directory is removed with all the
-            files and directories under it.
+            files and directories under it. Finally, if flags contains
+            wxPATH_RMDIR_PARENTS, then, after successfully removing this
+            directory, its parent directory is removed too if it is empty,
+            and so on recursively for the further ancestors of this
+            directory, stopping as soon as a non-empty (or otherwise
+            impossible to remove) directory is encountered.
 
         @return Returns @true if the directory was successfully deleted, @false
                 otherwise.
@@ -1266,7 +1314,12 @@ public:
             contains subdirectories, provided that there are no files in
             neither this directory nor its subdirectories. If flags contains
             wxPATH_RMDIR_RECURSIVE, then the directory is removed with all the
-            files and directories under it.
+            files and directories under it. Finally, if flags contains
+            wxPATH_RMDIR_PARENTS, then, after successfully removing this
+            directory, its parent directory is removed too if it is empty,
+            and so on recursively for the further ancestors of this
+            directory, stopping as soon as a non-empty (or otherwise
+            impossible to remove) directory is encountered.
 
         @return Returns @true if the directory was successfully deleted, @false
                 otherwise.
@@ -1351,6 +1404,37 @@ public:
                 the file doesn't exist).
     */
     bool SetPermissions(int permissions);
+
+    /**
+        Copies the attributes of the given file to this one.
+
+        This function is useful when replacing an existing file by writing the
+        new contents to a temporary file and then renaming it over the old
+        one, as it allows the replacement to keep the attributes of the file
+        being replaced, which would be lost otherwise.
+
+        Under Unix this copies the file permissions (including setuid and
+        setgid bits). Under MSW it copies the hidden, system and
+        not-content-indexed attributes and the creation time (access and
+        modification times will presumably be modified by the program anyhow
+        and so are not copied). Under other platforms this function currently
+        does nothing but still returns @true.
+
+        Note that this function does @e not copy everything and, in
+        particular, under MSW it doesn't copy the read-only attribute, as this
+        would prevent the destination file from being modified or removed
+        later. It also currently doesn't copy the compressed and encrypted
+        attributes nor the access control lists.
+
+        @param source
+            The file to copy the attributes from. It must exist.
+
+        @return @true if all supported attributes were copied, @false if any of
+            them couldn't be (some of them may still have been copied).
+
+        @since 3.3.4
+    */
+    bool CopyAttributesFrom(const wxFileName& source) const;
 
     /**
         Converts URL into a well-formed filename.

@@ -148,6 +148,8 @@ wxBEGIN_EVENT_TABLE(wxRibbonPage, wxRibbonControl)
     EVT_ERASE_BACKGROUND(wxRibbonPage::OnEraseBackground)
     EVT_PAINT(wxRibbonPage::OnPaint)
     EVT_SIZE(wxRibbonPage::OnSize)
+    EVT_DPI_CHANGED(wxRibbonPage::OnDPIChanged)
+    EVT_SYS_COLOUR_CHANGED(wxRibbonPage::OnSysColourChanged)
 wxEND_EVENT_TABLE()
 
 wxRibbonPage::wxRibbonPage()
@@ -161,7 +163,7 @@ wxRibbonPage::wxRibbonPage()
 wxRibbonPage::wxRibbonPage(wxRibbonBar* parent,
                    wxWindowID id,
                    const wxString& label,
-                   const wxBitmap& icon,
+                   const wxBitmapBundle& icon,
                    long WXUNUSED(style))
     : wxRibbonControl(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
 {
@@ -178,7 +180,7 @@ wxRibbonPage::~wxRibbonPage()
 bool wxRibbonPage::Create(wxRibbonBar* parent,
                 wxWindowID id,
                 const wxString& label,
-                const wxBitmap& icon,
+                const wxBitmapBundle& icon,
                 long WXUNUSED(style))
 {
     if(!wxRibbonControl::Create(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE))
@@ -189,7 +191,7 @@ bool wxRibbonPage::Create(wxRibbonBar* parent,
     return true;
 }
 
-void wxRibbonPage::CommonInit(const wxString& label, const wxBitmap& icon)
+void wxRibbonPage::CommonInit(const wxString& label, const wxBitmapBundle& icon)
 {
     SetName(label);
 
@@ -204,7 +206,8 @@ void wxRibbonPage::CommonInit(const wxString& label, const wxBitmap& icon)
 
     SetBackgroundStyle(wxBG_STYLE_PAINT);
 
-    wxDynamicCast(GetParent(), wxRibbonBar)->AddPage(this);
+    if (auto* const bar = wxCheckedStaticCast<wxRibbonBar>(GetParent()))
+        bar->AddPage(this);
 }
 
 void wxRibbonPage::SetArtProvider(wxRibbonArtProvider* art)
@@ -388,7 +391,7 @@ bool wxRibbonPage::ScrollSections(int sections)
         gap = m_art->GetMetric(wxRIBBON_ART_PANEL_Y_SEPARATION_SIZE);
         if (scrollForward)
         {
-            scrollpos = width - m_art->GetMetric(wxRIBBON_ART_PAGE_BORDER_BOTTOM_SIZE);
+            scrollpos = height - m_art->GetMetric(wxRIBBON_ART_PAGE_BORDER_BOTTOM_SIZE);
         }
         else
         {
@@ -562,30 +565,41 @@ void wxRibbonPage::OnSize(wxSizeEvent& evt)
     evt.Skip();
 }
 
+void wxRibbonPage::OnDPIChanged(wxDPIChangedEvent& event)
+{
+    Realize();
+    event.Skip();
+}
+
+void wxRibbonPage::OnSysColourChanged(wxSysColourChangedEvent& event)
+{
+    event.Skip();
+    if ( m_art )
+        m_art->UpdateColoursFromSystem();
+}
+
 void wxRibbonPage::RemoveChild(wxWindowBase *child)
 {
-    // Remove all references to the child from the collapse stack
+    // Remove all references to the child from the collapse stack. It can occur
+    // there any number of times, so keep only the entries which are not it.
     size_t count = m_collapse_stack.GetCount();
     size_t src, dst;
-    for(src = 0, dst = 0; src < count; ++src, ++dst)
+    for( src = 0, dst = 0; src < count; ++src )
     {
         wxRibbonControl *item = m_collapse_stack.Item(src);
         if(item == child)
         {
-            ++src;
-            if(src == count)
-            {
-                break;
-            }
+            continue;
         }
         if(src != dst)
         {
             m_collapse_stack.Item(dst) = item;
         }
+        ++dst;
     }
-    if(src > dst)
+    if( count > dst )
     {
-        m_collapse_stack.RemoveAt(dst, src - dst);
+        m_collapse_stack.RemoveAt(dst, count - dst);
     }
 
     // ... and then proceed as normal
@@ -887,7 +901,8 @@ bool wxRibbonPage::ShowScrollButtons()
 
     if(reposition)
     {
-        wxDynamicCast(GetParent(), wxRibbonBar)->RepositionPage(this);
+        wxASSERT_MSG(wxDynamicCast(GetParent(), wxRibbonBar), "pointer of wrong type?");
+        static_cast<wxRibbonBar*>(GetParent())->RepositionPage(this);
     }
 
     return reposition;
@@ -1064,7 +1079,7 @@ bool wxRibbonPage::CollapsePanels(wxOrientation direction, int minimum_amount)
                 }
             }
         }
-        if(largest_panel != nullptr)
+        if(largest_panel != nullptr && largest_panel_size != nullptr)
         {
             if(largest_panel->IsSizingContinuous())
             {
@@ -1275,7 +1290,8 @@ wxSize wxRibbonPage::DoGetBestSize() const
 
 void wxRibbonPage::HideIfExpanded()
 {
-    wxStaticCast(m_parent, wxRibbonBar)->HideIfExpanded();
+    if (auto* const bar = wxCheckedStaticCast<wxRibbonBar>(GetParent()))
+        bar->HideIfExpanded();
 }
 
 #endif // wxUSE_RIBBON

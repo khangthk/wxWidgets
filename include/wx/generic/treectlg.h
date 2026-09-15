@@ -235,7 +235,6 @@ protected:
     friend class wxTreeFindTimer;
     friend class wxTreeTextCtrl;
 
-    wxFont               m_normalFont;
     wxFont               m_boldFont;
 
     wxGenericTreeItem   *m_anchor;
@@ -357,8 +356,6 @@ protected:
     virtual wxSize DoGetBestSize() const override;
 
 private:
-    void OnDPIChanged(wxDPIChangedEvent& event);
-
     void OnSysColourChanged(wxSysColourChangedEvent& WXUNUSED(event))
     {
         InitVisualAttributes();
@@ -376,7 +373,7 @@ private:
     enum
     {
         Next_Any     = 0,
-        Next_Visible = 1
+        Next_Opened  = 1
     };
     wxTreeItemId DoGetNext(const wxTreeItemId& item, int flags = 0) const;
 

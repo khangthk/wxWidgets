@@ -60,7 +60,7 @@
 #endif // wxUSE_TIPWINDOW
 
 #if wxUSE_PROGRESSDLG
-#if wxUSE_STOPWATCH && wxUSE_LONGLONG
+#if wxUSE_STOPWATCH
     #include "wx/datetime.h"      // wxDateTime
 #endif
 
@@ -721,7 +721,7 @@ MyFrame::MyFrame(const wxString& title)
 
 #if wxUSE_INFOBAR
     // an info bar can be created very simply and used without any extra effort
-    m_infoBarSimple = new wxInfoBar(this);
+    m_infoBarSimple = new wxInfoBar(this, wxID_ANY, wxINFOBAR_CHECKBOX);
 
     // or it can also be customized by
     m_infoBarAdvanced = new wxInfoBar(this);
@@ -763,10 +763,6 @@ MyFrame::MyFrame(const wxString& title)
     SetOwnBackgroundColour(m_canvas->GetBackgroundColour());
 #endif // wxUSE_INFOBAR
 
-#if wxUSE_TIPWINDOW
-    m_tipWindow = nullptr;
-#endif // wxUSE_TIPWINDOW
-
 #ifdef __WXMSW__
     // Test MSW-specific function allowing to access the "system" menu.
     wxMenu * const menu = MSWGetSystemMenu();
@@ -798,7 +794,6 @@ void MyFrame::DoApplyColour(const wxColour& colour)
         return;
 
     m_canvas->SetBackgroundColour(colour);
-    m_canvas->ClearBackground();
     m_canvas->Refresh();
 }
 
@@ -862,7 +857,6 @@ void MyFrame::ChooseColourGeneric(wxCommandEvent& event)
     {
         m_clrData = dialog->GetColourData();
         m_canvas->SetBackgroundColour(m_clrData.GetColour());
-        m_canvas->ClearBackground();
         m_canvas->Refresh();
     }
     dialog->Destroy();
@@ -942,6 +936,13 @@ void MyFrame::LogDialog(wxCommandEvent& WXUNUSED(event))
 void MyFrame::InfoBarSimple(wxCommandEvent& WXUNUSED(event))
 {
     static int s_count = 0;
+    static bool s_dontShowAgain = false;
+
+    if (s_dontShowAgain)
+    {
+        wxMessageBox("You asked to not see this again. Remember?");
+        return;
+    }
 
     wxString msg;
     if ( ++s_count % 2 )
@@ -959,7 +960,21 @@ void MyFrame::InfoBarSimple(wxCommandEvent& WXUNUSED(event))
                    s_count);
     }
 
+    m_infoBarSimple->ShowCheckBox(_("Do not show this again"), false);
     m_infoBarSimple->ShowMessage(msg);
+    // intercept the close button being clicked
+    m_infoBarSimple->Bind(wxEVT_BUTTON,
+        [this](wxCommandEvent& WXUNUSED(event))
+        {
+            // dismiss the message and (if a generic control)
+            // see if the "don't show this again" checkbox
+            // was checked and handle that for next time
+            m_infoBarSimple->Dismiss();
+            if (m_infoBarSimple->IsCheckBoxChecked())
+            {
+                s_dontShowAgain = true;
+            };
+        }, wxID_CLOSE);
 }
 
 void MyFrame::InfoBarAdvanced(wxCommandEvent& WXUNUSED(event))
@@ -1163,6 +1178,7 @@ void MyFrame::LineEntry(wxCommandEvent& WXUNUSED(event))
                              "Please enter a string",
                              "Default value",
                              wxOK | wxCANCEL);
+    dialog.SetHint("Enter your text here");
 
     if (dialog.ShowModal() == wxID_OK)
     {
@@ -1176,6 +1192,7 @@ void MyFrame::TextEntry(wxCommandEvent& WXUNUSED(event))
                              "Please enter some text",
                              "First line\nSecond one\nAnd another one too",
                              wxOK | wxCANCEL | wxTE_MULTILINE);
+    dialog.SetHint("Enter your text here");
 
     if (dialog.ShowModal() == wxID_OK)
     {
@@ -2335,16 +2352,21 @@ void MyFrame::DlgCenteredParent(wxCommandEvent& WXUNUSED(event))
 void MyFrame::MiniFrame(wxCommandEvent& WXUNUSED(event))
 {
     wxFrame *frame = new wxMiniFrame(this, wxID_ANY, "Mini frame",
-                                     wxDefaultPosition, wxSize(300, 100),
+                                     wxDefaultPosition, wxDefaultSize,
                                      wxCAPTION | wxCLOSE_BOX);
-    new wxStaticText(frame,
-                     wxID_ANY,
-                     "Mini frames have slightly different appearance",
-                     wxPoint(5, 5));
-    new wxStaticText(frame,
-                     wxID_ANY,
-                     "from the normal frames but that's the only difference.",
-                     wxPoint(5, 25));
+    auto* const sizer = new wxBoxSizer(wxVERTICAL);
+    sizer->Add(
+        new wxStaticText(frame,
+                         wxID_ANY,
+                         "Mini frames have slightly different appearance"),
+        wxSizerFlags().Border());
+    sizer->Add(
+        new wxStaticText(frame,
+                         wxID_ANY,
+                         "from the normal frames but that's the only difference."),
+        wxSizerFlags().Border());
+    frame->SetSizer(sizer);
+    frame->SetSize(frame->GetBestSize());
 
     frame->CentreOnParent();
     frame->Show();
@@ -2837,14 +2859,13 @@ void MyFrame::OnShowTip(wxCommandEvent& WXUNUSED(event))
     }
     else
     {
-        m_tipWindow = new wxTipWindow
+        m_tipWindow = wxTipWindow::New
                           (
                             this,
                             "This is just some text to be shown in the tip "
                             "window, broken into multiple lines, each less "
                             "than 60 logical pixels wide.",
-                            FromDIP(60),
-                            &m_tipWindow
+                            FromDIP(60)
                           );
     }
 }
@@ -3428,7 +3449,7 @@ static void InitAboutInfoMinimal(wxAboutDialogInfo& info)
                         wxVERSION_NUM_DOT_STRING
                     ));
     info.SetDescription("This sample shows different wxWidgets dialogs.");
-    info.SetCopyright("Copyright (C) 1998-2023 wxWidgets dev team.");
+    info.SetCopyright("Copyright (C) 1992-2026 wxWidgets dev team.");
 }
 
 static void InitAboutInfoWebsite(wxAboutDialogInfo& info)
@@ -3722,8 +3743,8 @@ MyModelessDialog::MyModelessDialog(wxWindow *parent)
     wxCheckBox *check = new wxCheckBox(this, wxID_ANY, "Should be disabled");
     check->Disable();
 
-    sizerTop->Add(btn, 1, wxEXPAND | wxALL, 5);
-    sizerTop->Add(check, 1, wxEXPAND | wxALL, 5);
+    sizerTop->Add(btn, wxSizerFlags(1).Expand().Border());
+    sizerTop->Add(check, wxSizerFlags(1).Expand().Border());
 
     SetSizerAndFit(sizerTop);
 }
@@ -3759,10 +3780,11 @@ MyModalDialog::MyModalDialog(wxWindow *parent)
     m_btnModeless = new wxButton(this, wxID_ANY, "Mode&less dialog");
     m_btnDelete = new wxButton(this, wxID_ANY, "&Delete button");
 
-    sizerTop->Add(m_btnModal, 0, wxALIGN_CENTER | wxALL, 5);
-    sizerTop->Add(m_btnModeless, 0, wxALIGN_CENTER | wxALL, 5);
-    sizerTop->Add(m_btnDelete, 0, wxALIGN_CENTER | wxALL, 5);
-    sizerTop->Add(new wxButton(this, wxID_CLOSE), 0, wxALIGN_CENTER | wxALL, 5);
+    const wxSizerFlags centerWithBorder = wxSizerFlags().Centre().Border();
+    sizerTop->Add(m_btnModal, centerWithBorder);
+    sizerTop->Add(m_btnModeless, centerWithBorder);
+    sizerTop->Add(m_btnDelete, centerWithBorder);
+    sizerTop->Add(new wxButton(this, wxID_CLOSE), centerWithBorder);
 
     SetSizerAndFit(sizerTop);
 
@@ -3841,31 +3863,31 @@ StdButtonSizerDialog::StdButtonSizerDialog(wxWindow *parent)
 
     m_chkboxNoDefault = new wxCheckBox(this, wxID_ANY, "No Default");
 
-    sizer1->Add(m_radiobtnOk, 0, wxALL, 5);
-    sizer1->Add(m_radiobtnYes, 0, wxALL, 5);
+    sizer1->Add(m_radiobtnOk, wxSizerFlags().Border());
+    sizer1->Add(m_radiobtnYes, wxSizerFlags().Border());
 
-    sizer->Add(sizerInside1, 0, 0, 0);
-    sizerInside1->Add(m_chkboxAffirmativeButton, 0, wxALL, 5);
-    sizerInside1->Add(sizer1, 0, wxALL, 5);
+    sizer->Add(sizerInside1);
+    sizerInside1->Add(m_chkboxAffirmativeButton, wxSizerFlags().Border());
+    sizerInside1->Add(sizer1, wxSizerFlags().Border());
     sizerInside1->SetItemMinSize(sizer1, sizer1Box->GetBestSize());    // to prevent wrapping of static box label
 
-    sizer2->Add(m_radiobtnCancel, 0, wxALL, 5);
-    sizer2->Add(m_radiobtnClose, 0, wxALL, 5);
+    sizer2->Add(m_radiobtnCancel, wxSizerFlags().Border());
+    sizer2->Add(m_radiobtnClose, wxSizerFlags().Border());
 
-    sizer->Add(sizerInside2, 0, 0, 0);
-    sizerInside2->Add(m_chkboxDismissButton, 0, wxALL, 5);
-    sizerInside2->Add(sizer2, 0, wxALL, 5);
+    sizer->Add(sizerInside2);
+    sizerInside2->Add(m_chkboxDismissButton, wxSizerFlags().Border());
+    sizerInside2->Add(sizer2, wxSizerFlags().Border());
     sizerInside2->SetItemMinSize(sizer2, sizer2Box->GetBestSize());    // to prevent wrapping of static box label
 
-    sizerTop->Add(sizer, 0, wxALL, 5);
+    sizerTop->Add(sizer, wxSizerFlags().Border());
 
-    sizer3->Add(m_chkboxNo, 0, wxALL, 5);
-    sizer3->Add(m_chkboxHelp, 0, wxALL, 5);
-    sizer3->Add(m_chkboxApply, 0, wxALL, 5);
+    sizer3->Add(m_chkboxNo, wxSizerFlags().Border());
+    sizer3->Add(m_chkboxHelp, wxSizerFlags().Border());
+    sizer3->Add(m_chkboxApply, wxSizerFlags().Border());
 
-    sizerTop->Add(sizer3, 0, wxALL, 5);
+    sizerTop->Add(sizer3, wxSizerFlags().Border());
 
-    sizerTop->Add(m_chkboxNoDefault, 0, wxLEFT|wxRIGHT, 10);
+    sizerTop->Add(m_chkboxNoDefault, wxSizerFlags().DoubleHorzBorder());
 
     EnableDisableControls();
 
@@ -3934,7 +3956,7 @@ void StdButtonSizerDialog::OnEvent(wxCommandEvent& WXUNUSED(event))
     }
 
     m_buttonsSizer = CreateStdDialogButtonSizer(flags);
-    GetSizer()->Add(m_buttonsSizer, 0, wxGROW|wxALL, 5);
+    GetSizer()->Add(m_buttonsSizer, wxSizerFlags().Expand().Border());
 
     Layout();
     GetSizer()->SetSizeHints(this);
@@ -4042,8 +4064,8 @@ wxPanel* SettingsDialog::CreateGeneralSettingsPage(wxWindow* parent)
     wxBoxSizer* itemSizer3 = new wxBoxSizer( wxHORIZONTAL );
     wxCheckBox* checkBox3 = new wxCheckBox(panel, ID_LOAD_LAST_PROJECT, "&Load last project on startup", wxDefaultPosition, wxDefaultSize);
     checkBox3->SetValidator(wxGenericValidator(&m_settingsData.m_loadLastOnStartup));
-    itemSizer3->Add(checkBox3, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
-    item0->Add(itemSizer3, 0, wxGROW|wxALL, 0);
+    itemSizer3->Add(checkBox3, wxSizerFlags().CenterVertical().Border());
+    item0->Add(itemSizer3, wxSizerFlags().Expand());
 
     //// AUTOSAVE
 
@@ -4059,22 +4081,22 @@ wxPanel* SettingsDialog::CreateGeneralSettingsPage(wxWindow* parent)
     spinCtrl12->SetValidator(wxGenericValidator(&m_settingsData.m_autoSaveInterval));
 #endif
 
-    itemSizer12->Add(checkBox12, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
+    itemSizer12->Add(checkBox12, wxSizerFlags().CenterVertical().Border());
 #if wxUSE_SPINCTRL
-    itemSizer12->Add(spinCtrl12, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
+    itemSizer12->Add(spinCtrl12, wxSizerFlags().CenterVertical().Border());
 #endif
-    itemSizer12->Add(new wxStaticText(panel, wxID_STATIC, minsLabel), 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
-    item0->Add(itemSizer12, 0, wxGROW|wxALL, 0);
+    itemSizer12->Add(new wxStaticText(panel, wxID_STATIC, minsLabel), wxSizerFlags().CenterVertical().Border());
+    item0->Add(itemSizer12, wxSizerFlags().Expand());
 
     //// TOOLTIPS
 
     wxBoxSizer* itemSizer8 = new wxBoxSizer( wxHORIZONTAL );
     wxCheckBox* checkBox6 = new wxCheckBox(panel, ID_SHOW_TOOLTIPS, "Show &tooltips", wxDefaultPosition, wxDefaultSize);
     checkBox6->SetValidator(wxGenericValidator(&m_settingsData.m_showToolTips));
-    itemSizer8->Add(checkBox6, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
-    item0->Add(itemSizer8, 0, wxGROW|wxALL, 0);
+    itemSizer8->Add(checkBox6, wxSizerFlags().CenterVertical().Border());
+    item0->Add(itemSizer8, wxSizerFlags().Expand());
 
-    topSizer->Add( item0, wxSizerFlags(1).Expand().Border(wxALL, 5) );
+    topSizer->Add( item0, wxSizerFlags(1).Expand().Border() );
 
     panel->SetSizerAndFit(topSizer);
 
@@ -4096,7 +4118,7 @@ wxPanel* SettingsDialog::CreateAestheticSettingsPage(wxWindow* parent)
     wxRadioBox* projectOrGlobal = new wxRadioBox(panel, ID_APPLY_SETTINGS_TO, "&Apply settings to:",
         wxDefaultPosition, wxDefaultSize, 2, globalOrProjectChoices);
     projectOrGlobal->SetValidator(wxGenericValidator(&m_settingsData.m_applyTo));
-    item0->Add(projectOrGlobal, 0, wxGROW|wxALL, 5);
+    item0->Add(projectOrGlobal, wxSizerFlags().Expand().Border());
 
     projectOrGlobal->SetSelection(0);
 
@@ -4107,18 +4129,18 @@ wxPanel* SettingsDialog::CreateAestheticSettingsPage(wxWindow* parent)
 
     wxStaticBoxSizer* styleSizer = new wxStaticBoxSizer(wxVERTICAL, panel, "Background style:");
     wxStaticBox* const styleSizerBox = styleSizer->GetStaticBox();
-    item0->Add(styleSizer, 0, wxGROW|wxALL, 5);
+    item0->Add(styleSizer, wxSizerFlags().Expand().Border());
 
     wxBoxSizer* itemSizer2 = new wxBoxSizer( wxHORIZONTAL );
 
     wxChoice* choice2 = new wxChoice(styleSizerBox, ID_BACKGROUND_STYLE, wxDefaultPosition, wxDefaultSize, backgroundStyleChoices);
     choice2->SetValidator(wxGenericValidator(&m_settingsData.m_bgStyle));
 
-    itemSizer2->Add(new wxStaticText(styleSizerBox, wxID_ANY, "&Window:"), 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
-    itemSizer2->Add(5, 5, 1, wxALL, 0);
-    itemSizer2->Add(choice2, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5);
+    itemSizer2->Add(new wxStaticText(styleSizerBox, wxID_ANY, "&Window:"), wxSizerFlags().CenterVertical().Border());
+    itemSizer2->AddSpacer(5);
+    itemSizer2->Add(choice2, wxSizerFlags().CenterVertical().Border());
 
-    styleSizer->Add(itemSizer2, 0, wxGROW|wxALL, 5);
+    styleSizer->Add(itemSizer2, wxSizerFlags().Expand().Border());
 
 #if wxUSE_SPINCTRL
     //// FONT SIZE SELECTION
@@ -4127,12 +4149,12 @@ wxPanel* SettingsDialog::CreateAestheticSettingsPage(wxWindow* parent)
 
     wxSpinCtrl* spinCtrl = new wxSpinCtrl(itemSizer5->GetStaticBox(), ID_FONT_SIZE, wxEmptyString);
     spinCtrl->SetValidator(wxGenericValidator(&m_settingsData.m_titleFontSize));
-    itemSizer5->Add(spinCtrl, 0, wxALL|wxALIGN_CENTER_HORIZONTAL|wxALIGN_CENTER_VERTICAL, 5);
+    itemSizer5->Add(spinCtrl, wxSizerFlags().Center().Border());
 
-    item0->Add(itemSizer5, 0, wxGROW|wxLEFT|wxRIGHT, 5);
+    item0->Add(itemSizer5, wxSizerFlags().Expand().HorzBorder());
 #endif
 
-    topSizer->Add( item0, wxSizerFlags(1).Expand().Border(wxALL, 5) );
+    topSizer->Add( item0, wxSizerFlags(1).Expand().Border() );
     topSizer->AddSpacer(5);
 
     panel->SetSizerAndFit(topSizer);

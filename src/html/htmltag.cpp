@@ -165,7 +165,7 @@ wxHtmlTagsCache::wxHtmlTagsCache(const wxString& source)
                     int match_pos = 0;
                     while (pos < end && match_pos < tag_len )
                     {
-                        wxChar c = *pos;
+                        wxUniChar c = *pos;
                         if ( c == '>' || c == '<' )
                             break;
 
@@ -212,10 +212,9 @@ wxHtmlTagsCache::wxHtmlTagsCache(const wxString& source)
     }
 
     // ok, we're done, now we'll free .Name members of cache - we don't need it anymore:
-    for ( wxHtmlTagsCacheData::iterator i = Cache().begin();
-          i != Cache().end(); ++i )
+    for ( auto& entry : Cache() )
     {
-        wxDELETEA(i->Name);
+        wxDELETEA(entry.Name);
     }
 }
 
@@ -469,9 +468,8 @@ wxHtmlTag::wxHtmlTag(wxHtmlTag *parent,
     };
 
     wxHtmlStyleParams styleParams(*this);
-    for ( unsigned n = 0; n < WXSIZEOF(equivAttrs); n++ )
+    for ( const auto& ea : equivAttrs )
     {
-        const EquivAttr& ea = equivAttrs[n];
         if ( styleParams.HasParam(ea.style) && !HasParam(ea.attr) )
         {
             m_ParamNames.Add(ea.attr);

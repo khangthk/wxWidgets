@@ -21,9 +21,12 @@
 
 #include "wx/webrequest.h"
 #include "wx/filename.h"
+#include "wx/uri.h"
 #include "wx/wfstream.h"
 
+
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 // This test uses httpbin service and by default uses the mirror at the
@@ -140,23 +143,15 @@ protected:
                    const wxString& user,
                    const wxString& password)
     {
-        wxString schema;
-        wxString rest;
-        if ( baseURL.StartsWith("https://", &rest) )
-        {
-            schema = "https";
-        }
-        else if ( baseURL.StartsWith("http://", &rest) )
-        {
-            schema = "http";
-        }
-        else
-        {
-            FAIL("Base URL must be an HTTP(S) one: " << baseURL);
-        }
+        wxString url = baseURL;
+        if ( !url.EndsWith('/') && !relURL.StartsWith('/') )
+            url += '/';
+        url += relURL;
 
-        Create(wxString::Format("%s://%s:%s@%s/%s",
-                                schema, user, password, rest, relURL));
+        wxURI uri(url);
+        uri.SetUserAndPassword(user, password);
+
+        Create(uri.BuildURI());
     }
 
     virtual void Create(const wxString& url) = 0;
@@ -165,27 +160,32 @@ protected:
 
     virtual wxWebRequestBase& GetRequest() = 0;
 
-    // Check that the response is a JSON object containing a key "pi" with the
+    // Check that the response is a JSON object containing a specific key with the
     // expected value.
-    void CheckExpectedJSON(const wxString& response)
+    void CheckExpectedJSON(const wxString& response, const wxString& key,
+                           const wxString& value)
     {
         // We ought to really parse the returned JSON object, but to keep things as
         // simple as possible for now we just treat it as a string.
         INFO("Response: " << response);
 
-        const char* expectedKey = "\"pi\":";
+        wxString expectedKey = wxString::Format("\"%s\":", key);
         size_t pos = response.find(expectedKey);
         REQUIRE( pos != wxString::npos );
 
-        pos += strlen(expectedKey);
+        pos += expectedKey.size();
 
         // There may, or not, be a space after it.
         // And the value may be returned in an array.
-        while ( wxIsspace(response[pos]) || response[pos] == '[' )
-            pos++;
+        while ( wxIsspace(response[pos]) ||
+                response[pos] == '"' ||
+                response[pos] == '[' )
+        {
+            ++pos;
+        }
 
-        const char* expectedValue = "\"3.14159265358979323\"";
-        REQUIRE( response.compare(pos, strlen(expectedValue), expectedValue) == 0 );
+        wxString actualValue = response.substr(pos, value.size());
+        REQUIRE( actualValue == value );
     }
 
     // Special helper for "manual" tests taking the URL from the environment.
@@ -224,6 +224,75 @@ protected:
 
             GetRequest().MakeInsecure(flags);
         }
+
+        wxString debug;
+        if ( wxGetEnv("WX_TEST_WEBREQUEST_DEBUG", &debug ) )
+        {
+            class DebugLogger : public wxWebRequestDebugLogger
+            {
+            public:
+                virtual void OnInfo(const wxString& info) override
+                {
+                    wxFprintf(stderr, "// %s\n", info);
+                }
+
+                virtual void OnRequestSent(const wxString& line) override
+                {
+                    wxFprintf(stderr, "=> %s\n", line);
+                }
+
+                virtual void OnResponseReceived(const wxString& line) override
+                {
+                    wxFprintf(stderr, "<= %s\n", line);
+                }
+
+                virtual void OnHeaderSent(const wxString& name, const wxString& value) override
+                {
+                    wxFprintf(stderr, "-> %s: %s\n", name, value);
+                }
+
+                virtual void OnHeaderReceived(const wxString& name, const wxString& value) override
+                {
+                    wxFprintf(stderr, "<- %s: %s\n", name, value);
+                }
+
+                virtual void OnDataSent(const void* WXUNUSED(data), size_t size) override
+                {
+                    wxFprintf(stderr, "-> data (%zu bytes)\n", size);
+                }
+
+                virtual void OnDataReceived(const void* WXUNUSED(data), size_t size) override
+                {
+                    wxFprintf(stderr, "<- data (%zu bytes)\n", size);
+                }
+            };
+
+            if ( debug == "1" )
+                GetSession().SetDebugLogger(make_unique<DebugLogger>());
+            else
+                WARN("Unknown WX_TEST_WEBREQUEST_DEBUG value: " << debug);
+        }
+    }
+
+    wxString GetRedirectTarget(const wxString& relURL) const
+    {
+        // The default httpbin service is mounted below /httpbin, but the
+        // redirect target is host-root-relative, so preserve the base path.
+        wxURI baseURI(baseURL);
+        wxString target = baseURI.GetPath();
+        if ( !target.EndsWith('/') )
+            target += '/';
+        target += relURL;
+        target.Replace("/", "%2F");
+        return target;
+    }
+
+    bool ShouldSkipDigestAuth()
+    {
+        // Digest auth works with the local go-httpbin used by CI, but WinHTTP
+        // doesn't authenticate successfully with the default public mirror.
+        return baseURL == WX_TEST_WEBREQUEST_URL_DEFAULT &&
+               GetSession().GetLibraryVersionInfo().GetName() == "WinHTTP";
     }
 
 private:
@@ -364,11 +433,34 @@ public:
 // default buffer size works correctly.
 constexpr int DOWNLOAD_BYTES = 99999;
 
-// Substring used to check that we got the expected response after
-// authenticating successfully. It is so weird because httpbin and go-httpbin
-// use different strings for this: one uses "authenticated" while the other
-// ones uses "authorized", so we use a substring common to both of them.
-constexpr char AUTHORIZED_SUBSTRING[] = R"(ed": true)";
+// httpbin-compatible servers don't use identical JSON formatting, so check
+// simple values without depending on whitespace after the colon.
+static bool HasJsonValue(const wxString& response,
+                         const char* name,
+                         const char* value)
+{
+    std::string withSpace;
+    withSpace += '"';
+    withSpace += name;
+    withSpace += "\": ";
+    withSpace += value;
+
+    std::string withoutSpace;
+    withoutSpace += '"';
+    withoutSpace += name;
+    withoutSpace += "\":";
+    withoutSpace += value;
+
+    const std::string text(response.utf8_string());
+    return text.find(withSpace) != std::string::npos ||
+           text.find(withoutSpace) != std::string::npos;
+}
+
+static bool HasSuccessfulAuth(const wxString& response)
+{
+    return HasJsonValue(response, "authenticated", "true") ||
+           HasJsonValue(response, "authorized", "true");
+}
 
 TEST_CASE_METHOD(RequestFixture,
                  "WebRequest::Get::Bytes", "[net][webrequest][get]")
@@ -400,10 +492,10 @@ TEST_CASE_METHOD(RequestFixture,
 
     Create("status/200");
     CHECK( request.IsOk() );
-    CHECK( session.GetNativeHandle() );
 
     // Note that the request must be started to have a valid native handle.
     request.Start();
+    CHECK( session.GetNativeHandle() );
     CHECK( request.GetNativeHandle() );
     RunLoopWithTimeout();
     CHECK( request.GetState() == wxWebRequest::State_Completed );
@@ -433,15 +525,38 @@ TEST_CASE_METHOD(RequestFixture,
 }
 
 TEST_CASE_METHOD(RequestFixture,
+    "WebRequest::Get::AllHeaderValues", "[net][webrequest][get]")
+{
+    if ( !InitBaseURL() )
+        return;
+
+    Create("response-headers?freeform=wxWidgets&freeform=works!");
+    Run();
+    std::vector<wxString> headers = request.GetResponse().GetAllHeaderValues("freeform");
+
+#if wxUSE_WEBREQUEST_URLSESSION
+    // The httpbin service concatenates the given parameters.
+    REQUIRE( headers.size() == 1 );
+    CHECK( headers[0] == "wxWidgets, works!" );
+#else
+    REQUIRE( headers.size() == 2 );
+    CHECK( (headers[0] == "wxWidgets" && headers[1] == "works!") );
+#endif
+}
+
+TEST_CASE_METHOD(RequestFixture,
                  "WebRequest::Get::Param", "[net][webrequest][get]")
 {
     if ( !InitBaseURL() )
         return;
 
-    Create("get?pi=3.14159265358979323");
+    wxString key = "pi";
+    wxString value = "3.14159265358979323";
+
+    Create(wxString::Format("get?%s=%s", key, value));
     Run();
 
-    CheckExpectedJSON( request.GetResponse().AsString() );
+    CheckExpectedJSON( request.GetResponse().AsString(), key, value );
 }
 
 TEST_CASE_METHOD(RequestFixture,
@@ -577,7 +692,7 @@ TEST_CASE_METHOD(RequestFixture,
         return;
 
     Create("put");
-    std::unique_ptr<wxInputStream> is(new wxFileInputStream("horse.png"));
+    auto is = make_unique<wxFileInputStream>("horse.png");
     REQUIRE( is->IsOk() );
 
     request.SetData(is.release(), "image/png");
@@ -597,8 +712,7 @@ TEST_CASE_METHOD(RequestFixture,
     Run();
 
     const wxString& response = request.GetResponse().AsString();
-    CHECK_THAT( response.utf8_string(),
-                Catch::Contains(R"("bloordyblop": 17)") );
+    CHECK( HasJsonValue(response, "bloordyblop", "17") );
 }
 
 TEST_CASE_METHOD(RequestFixture,
@@ -619,8 +733,7 @@ TEST_CASE_METHOD(RequestFixture,
 
         const auto& response = request.GetResponse();
         CHECK( response.GetStatus() == 200 );
-        CHECK_THAT( response.AsString().utf8_string(),
-                    Catch::Contains(AUTHORIZED_SUBSTRING) );
+        CHECK( HasSuccessfulAuth(response.AsString()) );
     }
 
     SECTION("Bad password")
@@ -633,10 +746,52 @@ TEST_CASE_METHOD(RequestFixture,
 }
 
 TEST_CASE_METHOD(RequestFixture,
+                 "WebRequest::Auth::Basic/Explicit", "[net][webrequest][auth]")
+{
+    if ( !InitBaseURL() )
+        return;
+
+    Create("basic-auth/wxtest/wxwidgets");
+
+    request.UseBasicAuth(wxWebCredentials("wxtest", wxSecretValue("wxwidgets")));
+
+    Run();
+
+    CHECK( HasSuccessfulAuth(request.GetResponse().AsString()) );
+}
+
+TEST_CASE_METHOD(RequestFixture,
+                 "WebRequest::Auth::Basic/Reserved", "[net][webrequest][auth]")
+{
+    if ( !InitBaseURL() )
+        return;
+
+    // Use some reserved (in the RFC 3986 sense) characters in the user name and
+    // the password (as well as a sub-delimiter character '=' in the password).
+    Create("basic-auth/u%40d/1%3d2%3f");
+    Run(wxWebRequest::State_Unauthorized, 401);
+    REQUIRE( request.GetAuthChallenge().IsOk() );
+
+    UseCredentials("u@d", "1=2?");
+    RunLoopWithTimeout();
+    CHECK( request.GetState() == wxWebRequest::State_Completed );
+
+    const auto& response = request.GetResponse();
+    CHECK( response.GetStatus() == 200 );
+    CHECK( HasSuccessfulAuth(response.AsString()) );
+}
+
+TEST_CASE_METHOD(RequestFixture,
                  "WebRequest::Auth::Digest", "[net][webrequest][auth]")
 {
     if ( !InitBaseURL() )
         return;
+
+    if ( ShouldSkipDigestAuth() )
+    {
+        WARN("Skipping Digest auth test with default URL and WinHTTP backend");
+        return;
+    }
 
     Create("digest-auth/auth/wxtest/wxwidgets");
     Run(wxWebRequest::State_Unauthorized, 401);
@@ -650,8 +805,7 @@ TEST_CASE_METHOD(RequestFixture,
 
         const auto& response = request.GetResponse();
         CHECK( response.GetStatus() == 200 );
-        CHECK_THAT( response.AsString().utf8_string(),
-                    Catch::Contains(AUTHORIZED_SUBSTRING) );
+        CHECK( HasSuccessfulAuth(response.AsString()) );
     }
 
     SECTION("Bad password")
@@ -676,8 +830,7 @@ TEST_CASE_METHOD(RequestFixture,
 
     const auto& response = request.GetResponse();
     CHECK( response.GetStatus() == 200 );
-    CHECK_THAT( response.AsString().utf8_string(),
-                Catch::Contains(AUTHORIZED_SUBSTRING) );
+    CHECK( HasSuccessfulAuth(response.AsString()) );
 }
 
 TEST_CASE_METHOD(RequestFixture,
@@ -686,6 +839,12 @@ TEST_CASE_METHOD(RequestFixture,
     if ( !InitBaseURL() )
         return;
 
+    if ( ShouldSkipDigestAuth() )
+    {
+        WARN("Skipping Digest auth test with default URL and WinHTTP backend");
+        return;
+    }
+
     CreateWithAuth("digest-auth/auth/wxtest/wxwidgets", "wxtest", "wxwidgets");
     Run();
 
@@ -693,8 +852,7 @@ TEST_CASE_METHOD(RequestFixture,
 
     const auto& response = request.GetResponse();
     CHECK( response.GetStatus() == 200 );
-    CHECK_THAT( response.AsString().utf8_string(),
-                Catch::Contains(AUTHORIZED_SUBSTRING) );
+    CHECK( HasSuccessfulAuth(response.AsString()) );
 }
 
 TEST_CASE_METHOD(RequestFixture,
@@ -743,6 +901,21 @@ TEST_CASE_METHOD(RequestFixture,
     CHECK( stateFromEvent == wxWebRequest::State_Completed );
     CHECK( statusFromEvent == 200 );
     CHECK( responseStringFromEvent == "Still alive!" );
+}
+
+TEST_CASE_METHOD(RequestFixture, "WebRequest::LifeTime", "[net][webrequest]")
+{
+    if ( !InitBaseURL() )
+        return;
+
+    Create("status/200");
+    Run();
+
+    // Close the session before the request is destroyed: this shouldn't result
+    // in a crash.
+    wxWebSession::GetDefault().Close();
+
+    CHECK( request.GetResponse().GetStatus() == 200 );
 }
 
 class SyncRequestFixture : public BaseRequestFixture
@@ -866,9 +1039,12 @@ TEST_CASE_METHOD(SyncRequestFixture,
     if ( !InitBaseURL() )
         return;
 
-    REQUIRE( Execute("get?pi=3.14159265358979323") );
+    wxString key = "pi";
+    wxString value = "3.14159265358979323";
 
-    CheckExpectedJSON( response.AsString() );
+    REQUIRE( Execute(wxString::Format("get?%s=%s", key, value)) );
+
+    CheckExpectedJSON( response.AsString(), key, value );
 }
 
 TEST_CASE_METHOD(SyncRequestFixture,
@@ -1004,13 +1180,37 @@ TEST_CASE_METHOD(SyncRequestFixture,
 }
 
 TEST_CASE_METHOD(SyncRequestFixture,
+                 "WebRequest::Sync::PostAfterRedirect", "[net][webrequest][sync]")
+{
+    if ( !InitBaseURL() )
+        return;
+
+    // We can't test this when using WinHTTP because we need to use either 307
+    // or 308 redirect status code to preserve the POST method across the
+    // redirect (all backends switch to GET for 301 and 302, although it would
+    // be possible to configure this to preserve POST when using libcurl) and
+    // WinHTTP doesn't handle them automatically.
+    const auto& versionInfo = wxWebSession::GetDefault().GetLibraryVersionInfo();
+    if ( versionInfo.GetName() == "WinHTTP" )
+    {
+        WARN("Skipping POST with redirect test with WinHTTP backend");
+        return;
+    }
+
+    Create("redirect-to?url=/post&status_code=307");
+    request.SetData("app=WebRequestRedirect&version=1", "application/x-www-form-urlencoded");
+    REQUIRE( Execute() );
+    CHECK( response.GetStatus() == 200 );
+}
+
+TEST_CASE_METHOD(SyncRequestFixture,
                  "WebRequest::Sync::Put", "[net][webrequest][sync]")
 {
     if ( !InitBaseURL() )
         return;
 
     Create("put");
-    std::unique_ptr<wxInputStream> is(new wxFileInputStream("horse.png"));
+    auto is = make_unique<wxFileInputStream>("horse.png");
     REQUIRE( is->IsOk() );
 
     request.SetData(is.release(), "image/png");
@@ -1031,8 +1231,7 @@ TEST_CASE_METHOD(SyncRequestFixture,
     REQUIRE( Execute() );
 
     CHECK( response.GetStatus() == 200 );
-    CHECK_THAT( response.AsString().utf8_string(),
-                Catch::Contains(R"("bloordyblop": 17)") );
+    CHECK( HasJsonValue(response.AsString(), "bloordyblop", "17") );
 }
 
 TEST_CASE_METHOD(SyncRequestFixture,
@@ -1056,8 +1255,32 @@ TEST_CASE_METHOD(SyncRequestFixture,
         CHECK( response.GetStatus() == 200 );
         CHECK( state == wxWebRequest::State_Completed );
 
-        CHECK_THAT( response.AsString().utf8_string(),
-                    Catch::Contains(AUTHORIZED_SUBSTRING) );
+        CHECK( HasSuccessfulAuth(response.AsString()) );
+    }
+
+    SECTION("Explicit basic auth")
+    {
+        Create("basic-auth/wxtest/wxwidgets");
+        request.UseBasicAuth(wxWebCredentials("wxtest", wxSecretValue("wxwidgets")));
+
+        CHECK( Execute() );
+        CHECK( response.GetStatus() == 200 );
+        CHECK( state == wxWebRequest::State_Completed );
+
+        CHECK( HasSuccessfulAuth(response.AsString()) );
+    }
+
+    SECTION("Password after redirect")
+    {
+        Create("redirect-to?url=" +
+               GetRedirectTarget("basic-auth/wxtest/wxwidgets"));
+        request.UseBasicAuth(wxWebCredentials("wxtest", wxSecretValue("wxwidgets")));
+
+        CHECK( Execute() );
+        CHECK( response.GetStatus() == 200 );
+        CHECK( state == wxWebRequest::State_Completed );
+
+        CHECK( HasSuccessfulAuth(response.AsString()) );
     }
 
     SECTION("Bad password")
@@ -1067,6 +1290,32 @@ TEST_CASE_METHOD(SyncRequestFixture,
         CHECK( response.GetStatus() == 401 );
         CHECK( state == wxWebRequest::State_Unauthorized );
     }
+
+    SECTION("Reserved characters")
+    {
+        if ( wxWebSession::GetDefault().GetLibraryVersionInfo().GetName()
+                == "URLSession" )
+        {
+            // NSURLSession doesn't decode percent-encoded characters in the
+            // password (as indirectly confirmed by the documentation of NSURL
+            // password property, which says that "Any percent-encoded
+            // characters are not unescaped.", resulting in sending wrong
+            // password to the server if we use any reserved characters in it.
+            CreateWithAuth("basic-auth/u%40d/1=2", "u@d", "1=2");
+        }
+        else
+        {
+            // With the other backends, using reserved characters in the
+            // password does work.
+            CreateWithAuth("basic-auth/u%40d/1%3d2%3f", "u@d", "1=2?");
+        }
+
+        REQUIRE( Execute() );
+        CHECK( response.GetStatus() == 200 );
+        CHECK( state == wxWebRequest::State_Completed );
+
+        CHECK( HasSuccessfulAuth(response.AsString()) );
+    }
 }
 
 TEST_CASE_METHOD(SyncRequestFixture,
@@ -1074,6 +1323,12 @@ TEST_CASE_METHOD(SyncRequestFixture,
 {
     if ( !InitBaseURL() )
         return;
+
+    if ( ShouldSkipDigestAuth() )
+    {
+        WARN("Skipping Digest auth test with default URL and WinHTTP backend");
+        return;
+    }
 
     const auto& versionInfo = wxWebSession::GetDefault().GetLibraryVersionInfo();
     if ( versionInfo.GetName() == "libcurl" && !versionInfo.AtLeast(7, 60) )
@@ -1101,8 +1356,7 @@ TEST_CASE_METHOD(SyncRequestFixture,
         CHECK( response.GetStatus() == 200 );
         CHECK( state == wxWebRequest::State_Completed );
 
-        CHECK_THAT( response.AsString().utf8_string(),
-                    Catch::Contains(AUTHORIZED_SUBSTRING) );
+        CHECK( HasSuccessfulAuth(response.AsString()) );
     }
 
     SECTION("Bad password")

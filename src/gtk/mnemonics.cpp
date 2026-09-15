@@ -58,9 +58,9 @@ static wxString GTKProcessMnemonics(const wxString& label, MnemonicsFlag flag)
     labelGTK.reserve(label.length());
     for ( wxString::const_iterator i = label.begin(); i != label.end(); ++i )
     {
-        wxChar ch = *i;
+        wxUniChar ch = *i;
 
-        switch ( ch )
+        switch ( ch.GetValue() )
         {
             case wxT('&'):
                 if ( i + 1 == label.end() )
@@ -76,9 +76,8 @@ static wxString GTKProcessMnemonics(const wxString& label, MnemonicsFlag flag)
                     size_t distanceFromEnd = label.end() - i;
 
                     // is this ampersand introducing a mnemonic or rather an entity?
-                    for (size_t j=0; j < WXSIZEOF(entitiesNames); j++)
+                    for ( const auto* entity : entitiesNames )
                     {
-                        const char *entity = entitiesNames[j];
                         size_t entityLen = wxStrlen(entity);
 
                         if (distanceFromEnd >= entityLen &&
@@ -98,7 +97,7 @@ static wxString GTKProcessMnemonics(const wxString& label, MnemonicsFlag flag)
                 }
 
                 ch = *(++i); // skip '&' itself
-                switch ( ch )
+                switch ( ch.GetValue() )
                 {
                     case wxT('&'):
                         // special case: "&&" is not a mnemonic at all but just

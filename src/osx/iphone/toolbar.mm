@@ -66,34 +66,38 @@ public:
                   wxObject *clientData,
                   const wxString& shortHelp,
                   const wxString& longHelp );
-    
+
     wxToolBarTool(wxToolBar *tbar, wxControl *control, const wxString& label);
-    
+
     virtual ~wxToolBarTool();
-    
+
     void Action()
     {
         wxToolBar *tbar = (wxToolBar*) GetToolBar();
         if (CanBeToggled())
         {
             bool    shouldToggle;
-            
+
             shouldToggle = !IsToggled();
             tbar->ToggleTool( GetId(), shouldToggle );
         }
-        
+
         tbar->OnLeftClick( GetId(), IsToggled() );
     }
-    
+
+    void MakeStretchable() override;
+
     UIBarButtonItem* GetUIBarButtonItem() const {return m_toolbarItem;}
 private:
-    
+
     void Init()
     {
         m_toolbarItem = nullptr;
         m_index = -1;
     }
-    
+
+    void RemoveAssociation();
+
     UIBarButtonItem* m_toolbarItem;
     // position in its toolbar, -1 means not inserted
     CFIndex m_index;
@@ -121,7 +125,7 @@ wxToolBarToolBase(
     UIBarButtonItem* bui = [UIBarButtonItem alloc];
     UIBarButtonItemStyle style = UIBarButtonItemStylePlain;
     wxUIToolbar* toolbar = (wxUIToolbar*) tbar->GetHandle();
-    
+
     if ( id == wxID_SEPARATOR )
     {
         bui = [bui initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
@@ -137,8 +141,12 @@ wxToolBarToolBase(
         if ( id == wxID_OK )
             style = UIBarButtonItemStyleDone;
         else
+        {
+            wxGCC_WARNING_SUPPRESS(deprecated-declarations)
             style = UIBarButtonItemStyleBordered;
-        
+            wxGCC_WARNING_RESTORE(deprecated-declarations)
+        }
+
         bui = [bui initWithTitle:wxCFStringRef(label).AsNSString() style:style target:toolbar
                       action:@selector(clickedAction:)];
     }
@@ -152,14 +160,19 @@ wxToolBarTool::wxToolBarTool(wxToolBar *tbar, wxControl *control, const wxString
 {
     Init();
     UIBarButtonItem* bui = [UIBarButtonItem alloc];
-    
+
     [bui initWithCustomView:control->GetHandle() ];
-    
+
     m_toolbarItem = bui;
     wxToolBarToolList[bui] = this;
 }
 
 wxToolBarTool::~wxToolBarTool()
+{
+    RemoveAssociation();
+}
+
+void wxToolBarTool::RemoveAssociation()
 {
     bool found = true ;
     while ( found )
@@ -175,6 +188,24 @@ wxToolBarTool::~wxToolBarTool()
                 break;
             }
         }
+    }
+}
+
+
+void wxToolBarTool::MakeStretchable()
+{
+    wxToolBarToolBase::MakeStretchable();
+
+    if ( IsSeparator() )
+    {
+        RemoveAssociation();
+        [m_toolbarItem release];
+
+        UIBarButtonItem* bui = [UIBarButtonItem alloc];
+        bui = [bui initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+
+        m_toolbarItem = bui;
+        wxToolBarToolList[bui] = this;
     }
 }
 
@@ -204,7 +235,7 @@ void wxToolBar::Init()
 {
     m_maxWidth = -1;
     m_maxHeight = -1;
-    
+
     m_macToolbar = nullptr;
 }
 
@@ -223,32 +254,31 @@ bool wxToolBar::Create(
 
     if ( !wxToolBarBase::Create( parent, id, pos, size, style, wxDefaultValidator, name ) )
         return false;
-    
+
     FixupStyle();
-    
-    CGRect r = CGRectMake( pos.x, pos.y, size.x, size.y) ;
-    
+
     wxUIToolbar* toolbar = [[wxUIToolbar alloc] init];
     [toolbar sizeToFit];
-    
-    switch ( [[UIApplication sharedApplication] statusBarStyle] ) 
+
+    switch ( [[UIApplication sharedApplication] statusBarStyle] )
     {
-#ifdef __IPHONE_3_0
+        wxGCC_WARNING_SUPPRESS(deprecated-declarations)
         case UIStatusBarStyleBlackOpaque:
             toolbar.barStyle = UIBarStyleBlack;
             break;
+
         case UIStatusBarStyleBlackTranslucent:
+        wxGCC_WARNING_RESTORE(deprecated-declarations)
             toolbar.barStyle = UIBarStyleBlack;
             toolbar.translucent = YES;
             break;
-#endif
         default:
             toolbar.barStyle = UIBarStyleDefault;
             break;
     }
     m_macToolbar = toolbar;
 
-    SetPeer(new wxWidgetIPhoneImpl( this, toolbar ));    
+    SetPeer(new wxWidgetIPhoneImpl( this, toolbar ));
     MacPostControlCreate(pos, size) ;
     return true;
 }
@@ -262,8 +292,8 @@ bool wxToolBar::Realize()
 {
     if ( !wxToolBarBase::Realize() )
         return false;
-    
-    
+
+
     return true;
 }
 
@@ -275,9 +305,9 @@ void wxToolBar::DoLayout()
 void wxToolBar::DoSetSize(int x, int y, int width, int height, int sizeFlags)
 {
     wxToolBarBase::DoSetSize(x, y, width, height, sizeFlags);
-    
+
     DoLayout();
-} 
+}
 
 void wxToolBar::DoSetToolBitmapSize(const wxSize& size)
 {
@@ -304,7 +334,7 @@ void wxToolBar::SetToolNormalBitmap( int id, const wxBitmapBundle& bitmap )
     if ( tool )
     {
         wxCHECK_RET( tool->IsButton(), wxT("Can only set bitmap on button tools."));
-        
+
         tool->SetNormalBitmap(bitmap);
     }
 }
@@ -315,19 +345,19 @@ void wxToolBar::SetToolDisabledBitmap( int id, const wxBitmapBundle& bitmap )
     if ( tool )
     {
         wxCHECK_RET( tool->IsButton(), wxT("Can only set bitmap on button tools."));
-        
+
         tool->SetDisabledBitmap(bitmap);
-        
+
         // TODO:  what to do for this one?
     }
 }
 
-wxToolBarToolBase *wxToolBar::FindToolForPosition(wxCoord x, wxCoord y) const
+wxToolBarToolBase *wxToolBar::FindToolForPosition(wxCoord /*x*/, wxCoord /*y*/) const
 {
     return nullptr;
 }
 
-void wxToolBar::DoEnableTool(wxToolBarToolBase *t, bool enable)
+void wxToolBar::DoEnableTool(wxToolBarToolBase* /*t*/, bool /*enable*/)
 {
     /*
     if ( t != nullptr )
@@ -335,7 +365,7 @@ void wxToolBar::DoEnableTool(wxToolBarToolBase *t, bool enable)
      */
 }
 
-void wxToolBar::DoToggleTool(wxToolBarToolBase *t, bool toggle)
+void wxToolBar::DoToggleTool(wxToolBarToolBase* /*t*/, bool /*toggle*/)
 {
     /*
     wxToolBarTool *tool = (wxToolBarTool *)t;
@@ -349,30 +379,28 @@ bool wxToolBar::DoInsertTool(size_t pos, wxToolBarToolBase *toolBase)
     wxToolBarTool *tool = static_cast< wxToolBarTool*>(toolBase );
     if (tool == nullptr)
         return false;
-    
-    wxSize toolSize = GetToolSize();
-    
+
     switch (tool->GetStyle())
     {
         case wxTOOL_STYLE_SEPARATOR:
             break;
-            
+
         case wxTOOL_STYLE_BUTTON:
             break;
-            
+
         case wxTOOL_STYLE_CONTROL:
             // right now there's nothing to do here
             break;
-            
+
         default:
             break;
     }
-        
+
     [(wxUIToolbar*)m_macToolbar insertTool:tool->GetUIBarButtonItem() atIndex:pos];
     InvalidateBestSize();
-    
+
     return true;
-    
+
 }
 
 void wxToolBar::DoSetToggle(wxToolBarToolBase *WXUNUSED(tool), bool WXUNUSED(toggle))
@@ -380,19 +408,17 @@ void wxToolBar::DoSetToggle(wxToolBarToolBase *WXUNUSED(tool), bool WXUNUSED(tog
     wxFAIL_MSG( wxT("not implemented") );
 }
 
-bool wxToolBar::DoDeleteTool(size_t pos, wxToolBarToolBase *toolbase)
+bool wxToolBar::DoDeleteTool(size_t pos, wxToolBarToolBase* /*toolbase*/)
 {
-    wxToolBarTool* tool = static_cast< wxToolBarTool*>(toolbase );
-
     [(wxUIToolbar*)m_macToolbar removeTool:pos];
-    
+
     return true;
 }
 
 void wxToolBar::SetWindowStyleFlag( long style )
 {
     wxToolBarBase::SetWindowStyleFlag( style );
-    
+
 }
 
 @implementation wxUIToolbar
@@ -409,7 +435,7 @@ void wxToolBar::SetWindowStyleFlag( long style )
 - (void)clickedAction:(id)sender
 {
     ToolBarToolMap::iterator node = wxToolBarToolList.find(sender);
-    
+
     if ( node != wxToolBarToolList.end() )
         node->second->Action();
 }
@@ -425,7 +451,7 @@ void wxToolBar::SetWindowStyleFlag( long style )
     [mutableBarItems removeObjectAtIndex:pos];
     [super setItems:mutableBarItems];
 }
-     
+
 @end
 
 #endif // wxUSE_TOOLBAR

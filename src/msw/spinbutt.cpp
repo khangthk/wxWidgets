@@ -30,6 +30,7 @@
 
 #include "wx/spinbutt.h"
 
+#include "wx/dcbuffer.h"
 #include "wx/msw/dc.h"
 #include "wx/msw/private.h"
 #include "wx/msw/private/darkmode.h"
@@ -134,8 +135,17 @@ bool wxSpinButton::Create(wxWindow *parent,
     SubclassWin(m_hWnd);
 
     Bind(wxEVT_PAINT, &wxSpinButton::OnPaint, this);
+    Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent& event)
+    {
+        // Do nothing in dark mode, the background will be erased in OnPaint().
+        if ( !wxMSWDarkMode::IsActive() )
+            event.Skip();
+    });
 
     SetInitialSize(size);
+
+    if ( wxMSWDarkMode::IsActive() )
+        MSWSetDarkOrLightMode(SetMode::Initial);
 
     return true;
 }
@@ -171,12 +181,13 @@ void wxSpinButton::OnPaint(wxPaintEvent& event)
 {
     if ( wxMSWDarkMode::IsActive() )
     {
-        // Unfortunately PaintIfNecessary() can't be used here as we need to
-        // handle the extra border below, so duplicate what it does here.
+        // Have the updown control draw itself, then modify the result with a
+        // border and possibly inverted colours.
+
         const RECT rc = wxGetClientRect(GetHwnd());
         const wxSize size{rc.right - rc.left, rc.bottom - rc.top};
 
-        if ( size == wxSize() )
+        if ( size.IsEmpty() )
             return;
 
         wxBitmap bmp(size);
@@ -206,6 +217,10 @@ void wxSpinButton::OnPaint(wxPaintEvent& event)
 
         wxImage image = bmp.ConvertToImage();
 
+        // Prior to Windows 11 22H2 (build 22621), the updown control always
+        // draws in light mode, so invert the colours to make it dark.
+        const bool shouldInvert = !wxCheckOsVersion(10, 0, 22621);
+
         const int width = image.GetWidth();
         const int height = image.GetHeight();
         unsigned char *data = image.GetData();
@@ -223,7 +238,7 @@ void wxSpinButton::OnPaint(wxPaintEvent& event)
                     if ( alpha )
                         *alpha = wxALPHA_OPAQUE;
                 }
-                else
+                else if ( shouldInvert )
                 {
                     // This uses a slightly different formula than the one in
                     // InvertBitmapPixel() because the one there results in the
@@ -246,20 +261,15 @@ void wxSpinButton::OnPaint(wxPaintEvent& event)
         bmp = wxBitmap(image);
 #endif // wxUSE_IMAGE
 
-        PAINTSTRUCT ps;
-        wxDCTemp dc(::BeginPaint(GetHwnd(), &ps), size);
+        wxBufferedPaintDC dc(this);
+        // Clear the background, otherwise alpha transparency in the bitmap
+        // appears white.
+        dc.Clear();
         dc.DrawBitmap(bmp, 0, 0);
-        ::EndPaint(GetHwnd(), &ps);
     }
     else
     {
-        // We need to always paint this control explicitly instead of letting
-        // DefWndProc() do it, as this avoids whichever optimization the latter
-        // function does when WS_EX_COMPOSITED is on that result in not drawing
-        // parts of the control at all (see #23656).
-        wxPaintDC dc(this);
-
-        wxSpinButtonBase::OnPaint(event);
+        event.Skip();
     }
 }
 
@@ -358,7 +368,7 @@ bool wxSpinButton::MSWOnNotify(int WXUNUSED(idCtrl), WXLPARAM lParam, WXLPARAM *
     NM_UPDOWN *lpnmud = (NM_UPDOWN *)lParam;
 
     if ( lpnmud->hdr.hwndFrom != GetHwnd() || // make sure it is the right control
-         lpnmud->hdr.code != UDN_DELTAPOS )   // and the right notification 
+         lpnmud->hdr.code != UDN_DELTAPOS )   // and the right notification
         return false;
 
     int newVal = lpnmud->iPos + lpnmud->iDelta;

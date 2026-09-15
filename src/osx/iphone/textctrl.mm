@@ -123,7 +123,7 @@ protected :
 
 @end
 
-#if 0 
+#if 0
 @implementation wxUITextFieldEditor
 
 - (void) keyDown:(NSEvent*) event
@@ -302,7 +302,7 @@ protected :
 // wxUITextViewControl
 //
 
-wxUITextViewControl::wxUITextViewControl( wxTextCtrl *wxPeer, UITextView* v) : 
+wxUITextViewControl::wxUITextViewControl( wxTextCtrl *wxPeer, UITextView* v) :
     wxWidgetIPhoneImpl(wxPeer, v),
     wxTextWidgetImpl(wxPeer)
 {
@@ -354,9 +354,15 @@ wxString wxUITextViewControl::GetRTFValue() const
     return wxEmptyString;
 }
 
-void wxUITextViewControl::SetRTFValue(const wxString &str)
+void wxUITextViewControl::SetRTFValue(const wxString& /*str*/)
 {
     wxFAIL_MSG("SetRTFValue() should only be used with multiline controls.");
+}
+
+wxTextSearchResult wxUITextViewControl::SearchText(const wxTextSearch& /*search*/) const
+{
+    wxFAIL_MSG("SearchText() should only be used with multiline controls.");
+    return wxTextSearchResult();
 }
 
 void wxUITextViewControl::Copy()
@@ -439,10 +445,10 @@ void wxUITextViewControl::SetFont(const wxFont & font)
         [m_textView setFont: font.OSXGetUIFont()];
 }
 
-bool wxUITextViewControl::GetStyle(long position, wxTextAttr& style)
+bool wxUITextViewControl::GetStyle(long position, wxTextAttr& /*style*/)
 {
     if (m_textView && position >=0)
-    {   
+    {
         // UIFont* font = nullptr;
         // NSColor* bgcolor = nullptr;
         // NSColor* fgcolor = nullptr;
@@ -450,7 +456,7 @@ bool wxUITextViewControl::GetStyle(long position, wxTextAttr& style)
         // but that UITextStorage does not accept length as a valid position.
         // Therefore we return the default control style in that case.
         /*
-        if (position < [[m_textView string] length]) 
+        if (position < [[m_textView string] length])
         {
             UITextStorage* storage = [m_textView textStorage];
             font = [[storage attribute:NSFontAttributeName atIndex:position effectiveRange:nullptr] autorelease];
@@ -483,7 +489,7 @@ bool wxUITextViewControl::GetStyle(long position, wxTextAttr& style)
 
 void wxUITextViewControl::SetStyle(long start,
                                 long end,
-                                const wxTextAttr& style)
+                                const wxTextAttr& /*style*/)
 {
     if (m_textView) {
         NSRange range = NSMakeRange(start, end-start);
@@ -538,7 +544,7 @@ wxSize wxUITextViewControl::GetBestSize() const
 // wxUITextFieldControl
 //
 
-wxUITextFieldControl::wxUITextFieldControl( wxTextCtrl *wxPeer, UITextField* w ) : 
+wxUITextFieldControl::wxUITextFieldControl( wxTextCtrl *wxPeer, UITextField* w ) :
     wxWidgetIPhoneImpl(wxPeer, w),
     wxTextWidgetImpl(wxPeer)
 {
@@ -572,10 +578,17 @@ wxString wxUITextFieldControl::GetRTFValue() const
     return wxEmptyString;
 }
 
-void wxUITextFieldControl::SetRTFValue(const wxString &str)
+void wxUITextFieldControl::SetRTFValue(const wxString& /*str*/)
 {
     wxFAIL_MSG("SetRTFValue() should only be used with multiline controls.");
 }
+
+wxTextSearchResult wxUITextFieldControl::SearchText(const wxTextSearch& /*search*/) const
+{
+    wxFAIL_MSG("SearchText() should only be used with multiline controls.");
+    return wxTextSearchResult();
+}
+
 
 wxSize wxUITextFieldControl::GetBestSize() const
 {
@@ -672,8 +685,7 @@ void wxUITextFieldControl::WriteText(const wxString& str)
 #endif
 }
 
-void wxUITextFieldControl::controlAction(WXWidget WXUNUSED(slf),
-    void* WXUNUSED(_cmd), void *WXUNUSED(sender))
+void wxUITextFieldControl::controlAction(wxUint32 /*controlEvent*/)
 {
     wxWindow* wxpeer = (wxWindow*) GetWXPeer();
     if ( wxpeer && (wxpeer->GetWindowStyle() & wxTE_PROCESS_ENTER) )

@@ -51,6 +51,15 @@ public:
     virtual void Stop() override;
 
     virtual void Print() override;
+#if wxUSE_PRINTING_ARCHITECTURE
+    virtual void Print(const wxPrintData& printData, int flags = wxWEBVIEW_PRINT_HIDE_HEADER_FOOTER) override;
+    using wxWebView::Print;
+#endif
+
+    virtual bool PrintToPDF(const wxString& filePath) override;
+#if wxUSE_PRINTING_ARCHITECTURE
+    virtual bool PrintToPDF(const wxString& filePath, const wxPrintData& printData) override;
+#endif
 
     virtual void LoadURL(const wxString& url) override;
     virtual wxString GetCurrentURL() const override;
@@ -74,7 +83,8 @@ public:
     virtual wxVector<wxSharedPtr<wxWebViewHistoryItem> > GetBackwardHistory() override;
     virtual wxVector<wxSharedPtr<wxWebViewHistoryItem> > GetForwardHistory() override;
     virtual void LoadHistoryItem(wxSharedPtr<wxWebViewHistoryItem> item) override;
-
+    virtual bool ClearBrowsingData(int types = wxWEBVIEW_BROWSING_DATA_ALL,
+                                   wxDateTime since = {}) override;
     virtual void Paste() override;
 
     //Undo / redo functionality

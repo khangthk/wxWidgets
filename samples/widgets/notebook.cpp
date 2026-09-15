@@ -80,7 +80,7 @@ enum Orient
 class BookWidgetsPage : public WidgetsPage
 {
 public:
-    BookWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist, const char *const icon[]);
+    BookWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist, const char *const icon[]);
     virtual ~BookWidgetsPage();
 
     virtual wxWindow *GetWidget() const override { return m_book; }
@@ -182,7 +182,7 @@ wxEND_EVENT_TABLE()
 // implementation
 // ============================================================================
 
-BookWidgetsPage::BookWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist, const char *const icon[])
+BookWidgetsPage::BookWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist, const char *const icon[])
                 :WidgetsPage(book, imaglist, icon)
 {
     // init everything
@@ -217,12 +217,12 @@ void BookWidgetsPage::CreateContent()
                                    wxDefaultPosition, wxDefaultSize,
                                    orientations, 1, wxRA_SPECIFY_COLS);
 
-    sizerLeft->Add(m_chkImages, 0, wxALL, 5);
-    sizerLeft->Add(5, 5, 0, wxGROW | wxALL, 5); // spacer
-    sizerLeft->Add(m_radioOrient, 0, wxALL, 5);
+    sizerLeft->Add(m_chkImages, wxSizerFlags().Border());
+    sizerLeft->AddSpacer(FromDIP(15));
+    sizerLeft->Add(m_radioOrient, wxSizerFlags().Border());
 
     wxButton *btn = new wxButton(sizerLeftBox, BookPage_Reset, "&Reset");
-    sizerLeft->Add(btn, 0, wxALIGN_CENTRE_HORIZONTAL | wxALL, 15);
+    sizerLeft->Add(btn, wxSizerFlags().CentreHorizontal().TripleBorder());
 
     // middle pane
     wxStaticBoxSizer *sizerMiddle = new wxStaticBoxSizer(wxVERTICAL, this, "&Contents");
@@ -234,49 +234,49 @@ void BookWidgetsPage::CreateContent()
                                                     &text,
                                                     sizerMidleBox);
     text->SetEditable(false);
-    sizerMiddle->Add(sizerRow, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(sizerRow, wxSizerFlags().Expand().Border());
 
     sizerRow = CreateSizerWithTextAndLabel("Current selection: ",
                                            BookPage_CurSelectText,
                                            &text,
                                            sizerMidleBox);
     text->SetEditable(false);
-    sizerMiddle->Add(sizerRow, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(sizerRow, wxSizerFlags().Expand().Border());
 
     sizerRow = CreateSizerWithTextAndButton(BookPage_SelectPage,
                                             "&Select page",
                                             BookPage_SelectText,
                                             &m_textSelect,
                                             sizerMidleBox);
-    sizerMiddle->Add(sizerRow, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(sizerRow, wxSizerFlags().Expand().Border());
 
     btn = new wxButton(sizerMidleBox, BookPage_AddPage, "&Add page");
-    sizerMiddle->Add(btn, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(btn, wxSizerFlags().Expand().Border());
 
     sizerRow = CreateSizerWithTextAndButton(BookPage_InsertPage,
                                             "&Insert page at",
                                             BookPage_InsertText,
                                             &m_textInsert,
                                             sizerMidleBox);
-    sizerMiddle->Add(sizerRow, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(sizerRow, wxSizerFlags().Expand().Border());
 
     sizerRow = CreateSizerWithTextAndButton(BookPage_RemovePage,
                                             "&Remove page",
                                             BookPage_RemoveText,
                                             &m_textRemove,
                                             sizerMidleBox);
-    sizerMiddle->Add(sizerRow, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(sizerRow, wxSizerFlags().Expand().Border());
 
     btn = new wxButton(sizerMidleBox, BookPage_DeleteAll, "&Delete All");
-    sizerMiddle->Add(btn, 0, wxALL | wxGROW, 5);
+    sizerMiddle->Add(btn, wxSizerFlags().Expand().Border());
 
     // right pane
     m_sizerBook = new wxBoxSizer(wxHORIZONTAL);
 
     // the 3 panes compose the window
-    sizerTop->Add(sizerLeft, 0, wxGROW | (wxALL & ~wxLEFT), 10);
-    sizerTop->Add(sizerMiddle, 0, wxGROW | wxALL, 10);
-    sizerTop->Add(m_sizerBook, 1, wxGROW | (wxALL & ~wxRIGHT), 10);
+    sizerTop->Add(sizerLeft, wxSizerFlags().Expand().DoubleBorder(wxALL & ~wxLEFT));
+    sizerTop->Add(sizerMiddle, wxSizerFlags().Expand().DoubleBorder());
+    sizerTop->Add(m_sizerBook, wxSizerFlags(1).Expand().DoubleBorder(wxALL & ~wxRIGHT));
 
     RecreateBook();
 
@@ -395,8 +395,8 @@ void BookWidgetsPage::RecreateBook()
         }
     }
 
-    m_sizerBook->Add(m_book, 1, wxGROW | wxALL, 5);
-    m_sizerBook->SetMinSize(150, 0);
+    m_sizerBook->Add(m_book, wxSizerFlags(1).Expand().Border());
+    m_sizerBook->SetMinSize(FromDIP(150), 0);
     m_sizerBook->Layout();
 }
 
@@ -531,7 +531,7 @@ void BookWidgetsPage::OnCheckOrRadioBox(wxCommandEvent& WXUNUSED(event))
 class NotebookWidgetsPage : public BookWidgetsPage
 {
 public:
-    NotebookWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist)
+    NotebookWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist)
         : BookWidgetsPage(book, imaglist, notebook_xpm)
     {
         RecreateBook();
@@ -610,7 +610,7 @@ void NotebookWidgetsPage::OnPageChanged(wxNotebookEvent& event)
 class ListbookWidgetsPage : public BookWidgetsPage
 {
 public:
-    ListbookWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist)
+    ListbookWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist)
         : BookWidgetsPage(book, imaglist, listbook_xpm)
     {
         RecreateBook();
@@ -683,7 +683,7 @@ void ListbookWidgetsPage::OnPageChanged(wxListbookEvent& event)
 class ChoicebookWidgetsPage : public BookWidgetsPage
 {
 public:
-    ChoicebookWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist)
+    ChoicebookWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist)
         : BookWidgetsPage(book, imaglist, choicebk_xpm)
     {
         RecreateBook();

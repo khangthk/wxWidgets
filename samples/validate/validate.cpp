@@ -249,7 +249,7 @@ MyDialog::MyDialog( wxWindow *parent, const wxString& title,
     m_text = new wxTextCtrl(this, VALIDATE_TEXT);
     m_text->SetToolTip("wxTextValidator not set");
     m_text->SetHint("Enter some text here, please...");
-    flexgridsizer->Add(m_text, 1, wxGROW);
+    flexgridsizer->Add(m_text, wxSizerFlags(1).Expand());
 
     // Make it possible to change the wxTextValidator for m_text at runtime.
     wxButton* const button =
@@ -261,14 +261,14 @@ MyDialog::MyDialog( wxWindow *parent, const wxString& title,
                         wxDefaultPosition, wxDefaultSize,
                         3, g_listbox_choices, wxLB_MULTIPLE,
                         wxGenericValidator(&g_data.m_listbox_choices)),
-                       1, wxGROW);
+                       wxSizerFlags(1).Expand());
 
     m_combobox = new wxComboBox(this, VALIDATE_COMBO, wxEmptyString,
                                 wxDefaultPosition, wxDefaultSize,
                                 3, g_combobox_choices, 0L,
                                 MyComboBoxValidator(&g_data.m_combobox_choice));
     m_combobox->SetToolTip("uses a custom validator (MyComboBoxValidator)");
-    flexgridsizer->Add(m_combobox, 1, wxALIGN_CENTER);
+    flexgridsizer->Add(m_combobox, wxSizerFlags(1).Center());
 
     // This wxCheckBox* doesn't need to be assigned to any pointer
     // because we don't use it elsewhere--it can be anonymous.
@@ -326,7 +326,8 @@ MyDialog::MyDialog( wxWindow *parent, const wxString& title,
                                     3,
                                     &g_data.m_doubleValue,
                                     wxNUM_VAL_THOUSANDS_SEPARATOR |
-                                    wxNUM_VAL_NO_TRAILING_ZEROES
+                                    wxNUM_VAL_NO_TRAILING_ZEROES |
+                                    wxNUM_VAL_SIGN_PLUS
                                 )
                               );
     numSizer->Add(new wxStaticText(this, wxID_ANY, "Up to 3 decimals:"),
@@ -360,7 +361,7 @@ MyDialog::MyDialog( wxWindow *parent, const wxString& title,
 
     wxBoxSizer *mainsizer = new wxBoxSizer( wxVERTICAL );
 
-    mainsizer->Add(flexgridsizer, 1, wxGROW | wxALL, 10);
+    mainsizer->Add(flexgridsizer, wxSizerFlags(1).Expand().DoubleBorder());
 
     mainsizer->Add(new wxRadioBox((wxWindow*)this, VALIDATE_RADIO, "Pick a color",
                                     wxDefaultPosition, wxDefaultSize,
@@ -491,7 +492,7 @@ TextValidatorDialog::TextValidatorDialog(wxWindow *parent, wxTextCtrl* txtCtrl)
     // Set the main sizer.
     wxBoxSizer *mainsizer = new wxBoxSizer( wxVERTICAL );
 
-    mainsizer->Add(fgSizer, wxSizerFlags(1).Border(wxALL, 10).Expand());
+    mainsizer->Add(fgSizer, wxSizerFlags(1).DoubleBorder().Expand());
 
     mainsizer->Add(CreateButtonSizer(wxOK | wxCANCEL),
                    wxSizerFlags().Expand().DoubleBorder());

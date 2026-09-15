@@ -253,8 +253,8 @@ wxFileDialogCustomize::~wxFileDialogCustomize()
 {
     // For consistency with the rest of wx API, we own all the custom controls
     // pointers and delete them when we're deleted.
-    for ( size_t n = 0; n < m_controls.size(); ++n )
-        delete m_controls[n];
+    for ( const auto* ctrl : m_controls )
+        delete ctrl;
 
     // Do not delete m_impl, the derived classes use this object itself as
     // implementation, which allows us to avoid allocating it on the heap in
@@ -806,6 +806,7 @@ bool wxFileDialogBase::Create(wxWindow *parent,
 
             m_wildCard = wxString::Format
                          (
+                            // TRANSLATORS: %s are a file extension used to build a file wildcard string
                             _("%s files (%s)|%s"),
                             wildCard.c_str() + nDot,
                             wildCard.c_str(),

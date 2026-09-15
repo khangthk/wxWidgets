@@ -99,9 +99,9 @@ bool wxRadioBox::Create( wxWindow *parent,
     int n, const wxString choices[],
     int majorDim, long style,
     const wxValidator& val, const wxString& name )
-{    
+{
     DontCreatePeer();
-    
+
     if ( !wxControl::Create( parent, id, pos, size, style, val, name ) )
         return false;
 
@@ -252,7 +252,9 @@ void wxRadioBox::SetString(unsigned int item,const wxString& label)
         current = current->NextInCycle();
     }
 
-    return current->SetLabel( label );
+    current->SetLabel( label );
+
+    InvalidateBestSize();
 }
 
 // Sets a button by passing the desired position. This does not cause

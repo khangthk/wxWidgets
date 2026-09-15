@@ -93,6 +93,10 @@ public:
     // Rescale the given bitmap to the requested size.
     static void Rescale(wxBitmap& bmp, const wxSize& sizeNeeded);
 
+    // Convert the given bitmap to a disabled ("greyed out") appearance in place,
+    // preserving its scale factor.
+    static void MakeDisabled(wxBitmap& bmp);
+
     // wxVariant support
     wxDECLARE_VARIANT_OBJECT_EXPORTED(wxBitmap, WXDLLIMPEXP_CORE);
 };
@@ -330,7 +334,11 @@ protected:
     #define wxBITMAP_DEFAULT_TYPE    wxBITMAP_TYPE_PICT_RESOURCE
     #include "wx/osx/bitmap.h"
 #elif defined(__WXQT__)
-    #define wxBITMAP_DEFAULT_TYPE    wxBITMAP_TYPE_XPM
+    #ifdef __WINDOWS__
+        #define wxBITMAP_DEFAULT_TYPE    wxBITMAP_TYPE_BMP_RESOURCE
+    #else
+        #define wxBITMAP_DEFAULT_TYPE    wxBITMAP_TYPE_XPM
+    #endif
     #include "wx/qt/bitmap.h"
 #endif
 

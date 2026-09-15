@@ -18,6 +18,8 @@
     #include "wx/log.h"
 #endif
 
+#include <memory>
+
 #define TRACE_MODULE wxT("module")
 
 wxIMPLEMENT_ABSTRACT_CLASS(wxModule, wxObject);
@@ -87,10 +89,8 @@ bool wxModule::DoInitializeModule(wxModule *module,
     const wxArrayClassInfo& dependencies = module->m_dependencies;
 
     // satisfy module dependencies by loading them before the current module
-    for ( unsigned int i = 0; i < dependencies.size(); ++i )
+    for ( const auto& cinfo : dependencies )
     {
-        wxClassInfo * cinfo = dependencies[i];
-
         // Check if the module is already initialized
         wxModuleList::const_iterator it;
         for ( it = initializedModules.begin();
@@ -148,17 +148,48 @@ bool wxModule::DoInitializeModule(wxModule *module,
     return true;
 }
 
+void wxModule::AddModuleIfNecessary(const wxClassInfo *classInfo)
+{
+    wxCHECK_RET( classInfo, wxS("Valid class info must be provided") );
+    wxCHECK_RET( classInfo->IsKindOf(wxCLASSINFO(wxModule)),
+                  wxS("Class info must be for wxModule-derived class") );
+
+    const wxString className(classInfo->GetClassName());
+    for ( const auto& module : ms_modules )
+    {
+        if ( module->GetClassInfo()->GetClassName() == className )
+        {
+            // Already initialized or at least registered and will be
+            // initialized later.
+            return;
+        }
+    }
+
+    std::unique_ptr<wxModule>
+        module{static_cast<wxModule*>(classInfo->CreateObject())};
+
+    // Do not call RegisterModule() here as it would add it to ms_modules which
+    // would result in it being added twice as DoInitializeModule() would do it
+    // too on success.
+    module->m_state = State_Registered;
+
+    if ( !DoInitializeModule(module.get(), ms_modules) )
+    {
+        // Error is already given by DoInitializeModule().
+        return;
+    }
+
+    // Module is now owned by ms_modules.
+    module.release();
+}
+
 // Initialize user-defined modules
 bool wxModule::InitializeModules()
 {
     wxModuleList initializedModules;
 
-    for ( wxModuleList::const_iterator it = ms_modules.begin();
-          it != ms_modules.end();
-          ++it )
+    for ( auto* module : ms_modules )
     {
-        wxModule *module = *it;
-
         // the module could have been already initialized as dependency of
         // another one
         if ( module->m_state == State_Registered )
@@ -211,11 +242,9 @@ void wxModule::DoCleanUpModules(const wxModuleList& modules)
     }
 
     // clear all modules, even the non-initialized ones
-    for ( wxModuleList::const_iterator it = ms_modules.begin();
-          it != ms_modules.end();
-          ++it )
+    for ( const auto* module : ms_modules )
     {
-        delete *it;
+        delete module;
     }
 
     ms_modules.clear();
@@ -224,9 +253,9 @@ void wxModule::DoCleanUpModules(const wxModuleList& modules)
 bool wxModule::ResolveNamedDependencies()
 {
     // first resolve required dependencies
-    for ( size_t i = 0; i < m_namedDependencies.size(); ++i )
+    for ( const auto& namedDependency : m_namedDependencies )
     {
-        wxClassInfo *info = wxClassInfo::FindClass(m_namedDependencies[i]);
+        wxClassInfo *info = wxClassInfo::FindClass(namedDependency);
 
         if ( !info )
         {

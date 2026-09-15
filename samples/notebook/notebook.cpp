@@ -99,8 +99,8 @@ wxPanel *CreateRadioButtonsPage(wxBookCtrlBase *parent)
         4, computers, 0, wxRA_SPECIFY_COLS);
 
     wxBoxSizer *sizerPanel = new wxBoxSizer(wxVERTICAL);
-    sizerPanel->Add(radiobox1, 2, wxEXPAND);
-    sizerPanel->Add(radiobox2, 1, wxEXPAND);
+    sizerPanel->Add(radiobox1, wxSizerFlags(2).Expand());
+    sizerPanel->Add(radiobox2, wxSizerFlags(1).Expand());
     panel->SetSizer(sizerPanel);
 
     return panel;
@@ -419,7 +419,7 @@ MyFrame::MyFrame()
     m_sizerFrame = new wxBoxSizer(wxVERTICAL);
 
 #if USE_LOG
-    m_sizerFrame->Add(m_text, 1, wxEXPAND);
+    m_sizerFrame->Add(m_text, wxSizerFlags(1).Expand());
 #endif // USE_LOG
 
     RecreateBook();
@@ -635,8 +635,13 @@ wxPanel *MyFrame::CreateNewPage() const
     panel->SetHelpText("Panel with \"First\" and \"Second\" buttons");
 #endif
 
-    (void) new wxButton(panel, wxID_ANY, "First button", wxPoint(10, 30));
-    (void) new wxButton(panel, wxID_ANY, "Second button", wxPoint(150, 30));
+    wxBoxSizer* const sizer = new wxBoxSizer(wxHORIZONTAL);
+    panel->SetSizer(sizer);
+
+    sizer->Add(new wxButton(panel, wxID_ANY, "First button"),
+               wxSizerFlags().Border());
+    sizer->Add(new wxButton(panel, wxID_ANY, "Second button"),
+               wxSizerFlags().Border());
 
     return panel;
 }

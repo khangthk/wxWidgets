@@ -34,10 +34,14 @@
 #include "wx/printdlg.h"
 #include "wx/msw/printdlg.h"
 #include "wx/msw/dcprint.h"
+#include "wx/msw/private/darkmode.h"
 #include "wx/paper.h"
 #include "wx/modalhook.h"
 
 #include <stdlib.h>
+
+// This variable is used from src/msw/window.cpp.
+bool wxPrinterDialogShown = false;
 
 // smart pointer like class using OpenPrinter and ClosePrinter
 class WinPrinter
@@ -354,7 +358,7 @@ bool wxWindowsPrintNativeData::TransferTo( wxPrintData &data )
         }
     }
     else
-        data.SetDuplex( wxDUPLEX_SIMPLEX );
+        data.ResetDuplex();
 
     //// Quality
 
@@ -657,22 +661,25 @@ bool wxWindowsPrintNativeData::TransferFrom( const wxPrintData &data )
         }
 
         //// Duplex
-        short duplex;
-        switch (data.GetDuplex())
+        if ( data.IsDuplexSpecified() )
         {
-            case wxDUPLEX_HORIZONTAL:
-                duplex = DMDUP_HORIZONTAL;
-                break;
-            case wxDUPLEX_VERTICAL:
-                duplex = DMDUP_VERTICAL;
-                break;
-            default:
-            // in fact case wxDUPLEX_SIMPLEX:
-                duplex = DMDUP_SIMPLEX;
-                break;
+            short duplex;
+            switch ( data.GetDuplex() )
+            {
+                case wxDUPLEX_HORIZONTAL:
+                    duplex = DMDUP_HORIZONTAL;
+                    break;
+                case wxDUPLEX_VERTICAL:
+                    duplex = DMDUP_VERTICAL;
+                    break;
+                default:
+                // in fact case wxDUPLEX_SIMPLEX:
+                    duplex = DMDUP_SIMPLEX;
+                    break;
+            }
+            devMode->dmDuplex = duplex;
+            devMode->dmFields |= DM_DUPLEX;
         }
-        devMode->dmDuplex = duplex;
-        devMode->dmFields |= DM_DUPLEX;
 
         //// Quality
 
@@ -830,7 +837,18 @@ int wxWindowsPrintDialog::ShowModal()
     PRINTDLGEX* pd = (PRINTDLGEX*) m_printDlg;
     pd->hwndOwner = hWndParent;
 
+    // Printer dialog sends WM_ACTIVATE to the parent window before destroying
+    // itself for some reason, which results in our handler trying to set the
+    // focus back to the last focused window -- and failing, because the window
+    // doesn't have activation yet (it will only once the dialog will have been
+    // destroyed). So ignore these events while it is shown by setting this
+    // variable -- see also the code using it in wxWindow::HandleActivate().
+    wxPrinterDialogShown = true;
+
     HRESULT dlgRes = PrintDlgEx(pd);
+
+    wxPrinterDialogShown = false;
+
     bool ret = (dlgRes == S_OK && pd->dwResultAction == PD_RESULT_PRINT);
 
     pd->hwndOwner = 0;
@@ -890,18 +908,56 @@ bool wxWindowsPrintDialog::ConvertToNative( wxPrintDialogData &data )
     pd->nCopies = (DWORD)data.GetNoCopies();
 
     // Required only if PD_NOPAGENUMS flag is not set.
-    // Currently only one page range is supported.
     if ( data.GetEnablePageNumbers() )
     {
-        pd->nPageRanges = 1;
-        pd->nMaxPageRanges = 1;
-        pd->lpPageRanges = new PRINTPAGERANGE[1];
-        pd->lpPageRanges[0].nFromPage = (DWORD)data.GetFromPage();
-        pd->lpPageRanges[0].nToPage = (DWORD)data.GetToPage();
+        pd->nMaxPageRanges = (DWORD)data.GetMaxPageRanges();
 
-        // PrintDlgEx returns E_INVALIDARG if nFromPage is greater than nToPage
-        if (pd->lpPageRanges[0].nToPage < pd->lpPageRanges[0].nFromPage)
-            pd->lpPageRanges[0].nToPage = pd->lpPageRanges[0].nFromPage;
+        // Fill the provided PRINTPAGERANGE with valid values, even if the
+        // input data is invalid because otherwise PrintDlgEx() would simply
+        // fail with E_INVALIDARG.
+        auto setPageRange = [](PRINTPAGERANGE* ppr, int from, int to)
+        {
+            DWORD nFromPage = (DWORD)from;
+            DWORD nToPage = (DWORD)to;
+
+            if ( !nFromPage )
+                nFromPage = 1;
+            if ( nToPage < nFromPage )
+                nToPage = nFromPage;
+
+            ppr->nFromPage = nFromPage;
+            ppr->nToPage = nToPage;
+        };
+
+        const wxVector<wxPrintPageRange>& ranges = data.GetPageRanges();
+        if ( ranges.empty() )
+        {
+            // Use values for from/to page here to define a single range (which
+            // will usually be just "1") for compatibility: it would arguably
+            // make more sense to not define any ranges at all by setting
+            // nPageRanges to 0 (which is allowed, only lpPageRanges must be
+            // non-null), but this would change the behaviour of the existing
+            // code without any real gain, so don't do it, even if this means
+            // that there is currently no way to not show anything at all in
+            // the "Pages" text box of the print dialog.
+            pd->nPageRanges = 1;
+            pd->lpPageRanges = new PRINTPAGERANGE[pd->nMaxPageRanges];
+
+            setPageRange(pd->lpPageRanges, data.GetFromPage(), data.GetToPage());
+        }
+        else
+        {
+            pd->nPageRanges = (DWORD) ranges.size();
+            if ( pd->nPageRanges > pd->nMaxPageRanges )
+                pd->nMaxPageRanges = pd->nPageRanges;
+            pd->lpPageRanges = new PRINTPAGERANGE[pd->nMaxPageRanges];
+
+            PRINTPAGERANGE* ppr = pd->lpPageRanges;
+            for ( const wxPrintPageRange& range : ranges )
+            {
+                setPageRange(ppr++, range.fromPage, range.toPage);
+            }
+        }
     }
 
     pd->Flags = PD_RETURNDC;
@@ -925,7 +981,7 @@ bool wxWindowsPrintDialog::ConvertToNative( wxPrintDialogData &data )
         pd->Flags |= PD_NOCURRENTPAGE;
     if ( !data.GetEnablePageNumbers() )
         pd->Flags |= PD_NOPAGENUMS;
-    else if ( (!data.GetAllPages()) && (!data.GetSelection()) && (!data.GetCurrentPage()) && (data.GetFromPage() != 0) && (data.GetToPage() != 0))
+    else if ( (!data.GetAllPages()) && (!data.GetSelection()) && (!data.GetCurrentPage()) && (!data.GetPageRanges().empty()) )
         pd->Flags |= PD_PAGENUMS;
     if ( data.GetEnableHelp() )
         pd->Flags |= PD_SHOWHELP;
@@ -970,8 +1026,16 @@ bool wxWindowsPrintDialog::ConvertFromNative( wxPrintDialogData &data )
 
     if ( pd->lpPageRanges )
     {
-        data.SetFromPage(pd->lpPageRanges[0].nFromPage);
-        data.SetToPage(pd->lpPageRanges[0].nToPage);
+        wxPrintPageRanges ranges(pd->nPageRanges);
+        const PRINTPAGERANGE* ppr = pd->lpPageRanges;
+        for (auto& range : ranges)
+        {
+            range.fromPage = ppr->nFromPage;
+            range.toPage = ppr->nToPage;
+            ++ppr;
+        }
+
+        data.SetPageRanges(ranges);
     }
 
     data.SetMinPage( pd->nMinPage );
@@ -1055,6 +1119,41 @@ int wxWindowsPageSetupDialog::ShowModal()
         return wxID_CANCEL;
 }
 
+static bool wxMSWPageSetupUsesMetricUnits()
+{
+    wxChar buf[2];
+    if ( ::GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_IMEASURE,
+                         buf, WXSIZEOF(buf)) )
+    {
+        return buf[0] == wxT('0');
+    }
+
+    return true;
+}
+
+static DWORD wxMSWGetPageSetupUnits()
+{
+    return wxMSWPageSetupUsesMetricUnits()
+        ? PSD_INHUNDREDTHSOFMILLIMETERS
+        : PSD_INTHOUSANDTHSOFINCHES;
+}
+
+static int wxPageToNative(int mm, DWORD units)
+{
+    if ( units == PSD_INTHOUSANDTHSOFINCHES )
+        return ::MulDiv(mm, 10000, 254);
+
+    return mm * 100;
+}
+
+static int wxPageFromNative(int value, DWORD units)
+{
+    if ( units == PSD_INTHOUSANDTHSOFINCHES )
+        return ::MulDiv(value, 254, 10000);
+
+    return value / 100;
+}
+
 bool wxWindowsPageSetupDialog::ConvertToNative( wxPageSetupDialogData &data )
 {
     wxWindowsPrintNativeData *native_data =
@@ -1097,7 +1196,7 @@ bool wxWindowsPageSetupDialog::ConvertToNative( wxPageSetupDialogData &data )
         native_data->SetDevNames(nullptr);
     }
 
-    pd->Flags = PSD_MARGINS|PSD_MINMARGINS;
+    pd->Flags = PSD_MARGINS | PSD_MINMARGINS | PSD_ENABLEPAGESETUPHOOK;
 
     if ( data.GetDefaultMinMargins() )
         pd->Flags |= PSD_DEFAULTMINMARGINS;
@@ -1114,28 +1213,35 @@ bool wxWindowsPageSetupDialog::ConvertToNative( wxPageSetupDialogData &data )
     if ( data.GetEnableHelp() )
         pd->Flags |= PSD_SHOWHELP;
 
-    // We want the units to be in hundredths of a millimetre
-    pd->Flags |= PSD_INHUNDREDTHSOFMILLIMETERS;
+    const DWORD pageSetupUnits = wxMSWGetPageSetupUnits();
+    pd->Flags |= pageSetupUnits;
 
     pd->lStructSize = sizeof( PAGESETUPDLG );
     pd->hwndOwner = nullptr;
     pd->hInstance = nullptr;
-    //   PAGESETUPDLG is in hundreds of a mm
-    pd->ptPaperSize.x = data.GetPaperSize().x * 100;
-    pd->ptPaperSize.y = data.GetPaperSize().y * 100;
+    pd->ptPaperSize.x = wxPageToNative(data.GetPaperSize().x, pageSetupUnits);
+    pd->ptPaperSize.y = wxPageToNative(data.GetPaperSize().y, pageSetupUnits);
 
-    pd->rtMinMargin.left = data.GetMinMarginTopLeft().x * 100;
-    pd->rtMinMargin.top = data.GetMinMarginTopLeft().y * 100;
-    pd->rtMinMargin.right = data.GetMinMarginBottomRight().x * 100;
-    pd->rtMinMargin.bottom = data.GetMinMarginBottomRight().y * 100;
+    pd->rtMinMargin.left =
+        wxPageToNative(data.GetMinMarginTopLeft().x, pageSetupUnits);
+    pd->rtMinMargin.top =
+        wxPageToNative(data.GetMinMarginTopLeft().y, pageSetupUnits);
+    pd->rtMinMargin.right =
+        wxPageToNative(data.GetMinMarginBottomRight().x, pageSetupUnits);
+    pd->rtMinMargin.bottom =
+        wxPageToNative(data.GetMinMarginBottomRight().y, pageSetupUnits);
 
-    pd->rtMargin.left = data.GetMarginTopLeft().x * 100;
-    pd->rtMargin.top = data.GetMarginTopLeft().y * 100;
-    pd->rtMargin.right = data.GetMarginBottomRight().x * 100;
-    pd->rtMargin.bottom = data.GetMarginBottomRight().y * 100;
+    pd->rtMargin.left =
+        wxPageToNative(data.GetMarginTopLeft().x, pageSetupUnits);
+    pd->rtMargin.top =
+        wxPageToNative(data.GetMarginTopLeft().y, pageSetupUnits);
+    pd->rtMargin.right =
+        wxPageToNative(data.GetMarginBottomRight().x, pageSetupUnits);
+    pd->rtMargin.bottom =
+        wxPageToNative(data.GetMarginBottomRight().y, pageSetupUnits);
 
     pd->lCustData = 0;
-    pd->lpfnPageSetupHook = nullptr;
+    pd->lpfnPageSetupHook = wxMSWDarkMode::CommonDialogHookProc;
     pd->lpfnPagePaintHook = nullptr;
     pd->hPageSetupTemplate = nullptr;
     pd->lpPageSetupTemplateName = nullptr;
@@ -1181,6 +1287,10 @@ bool wxWindowsPageSetupDialog::ConvertFromNative( wxPageSetupDialogData &data )
 
     data.GetPrintData().ConvertFromNative();
 
+    const DWORD pageSetupUnits = (pd->Flags & PSD_INTHOUSANDTHSOFINCHES)
+        ? PSD_INTHOUSANDTHSOFINCHES
+        : PSD_INHUNDREDTHSOFMILLIMETERS;
+
     pd->Flags = PSD_MARGINS|PSD_MINMARGINS;
 
     data.SetDefaultMinMargins( ((pd->Flags & PSD_DEFAULTMINMARGINS) == PSD_DEFAULTMINMARGINS) );
@@ -1191,17 +1301,32 @@ bool wxWindowsPageSetupDialog::ConvertFromNative( wxPageSetupDialogData &data )
     data.SetDefaultInfo( ((pd->Flags & PSD_RETURNDEFAULT) == PSD_RETURNDEFAULT) );
     data.EnableHelp( ((pd->Flags & PSD_SHOWHELP) == PSD_SHOWHELP) );
 
-    //   PAGESETUPDLG is in hundreds of a mm
-    if (data.GetPrintData().GetOrientation() == wxLANDSCAPE)
-        data.SetPaperSize( wxSize(pd->ptPaperSize.y / 100, pd->ptPaperSize.x / 100) );
+    if ( data.GetPrintData().GetOrientation() == wxLANDSCAPE )
+    {
+        data.SetPaperSize(wxSize(
+            wxPageFromNative(pd->ptPaperSize.y, pageSetupUnits),
+            wxPageFromNative(pd->ptPaperSize.x, pageSetupUnits)));
+    }
     else
-        data.SetPaperSize( wxSize(pd->ptPaperSize.x / 100, pd->ptPaperSize.y / 100) );
+    {
+        data.SetPaperSize(wxSize(
+            wxPageFromNative(pd->ptPaperSize.x, pageSetupUnits),
+            wxPageFromNative(pd->ptPaperSize.y, pageSetupUnits)));
+    }
 
-    data.SetMinMarginTopLeft( wxPoint(pd->rtMinMargin.left / 100, pd->rtMinMargin.top / 100) );
-    data.SetMinMarginBottomRight( wxPoint(pd->rtMinMargin.right / 100, pd->rtMinMargin.bottom / 100) );
+    data.SetMinMarginTopLeft(wxPoint(
+        wxPageFromNative(pd->rtMinMargin.left, pageSetupUnits),
+        wxPageFromNative(pd->rtMinMargin.top, pageSetupUnits)));
+    data.SetMinMarginBottomRight(wxPoint(
+        wxPageFromNative(pd->rtMinMargin.right, pageSetupUnits),
+        wxPageFromNative(pd->rtMinMargin.bottom, pageSetupUnits)));
 
-    data.SetMarginTopLeft( wxPoint(pd->rtMargin.left / 100, pd->rtMargin.top / 100) );
-    data.SetMarginBottomRight( wxPoint(pd->rtMargin.right / 100, pd->rtMargin.bottom / 100) );
+    data.SetMarginTopLeft(wxPoint(
+        wxPageFromNative(pd->rtMargin.left, pageSetupUnits),
+        wxPageFromNative(pd->rtMargin.top, pageSetupUnits)));
+    data.SetMarginBottomRight(wxPoint(
+        wxPageFromNative(pd->rtMargin.right, pageSetupUnits),
+        wxPageFromNative(pd->rtMargin.bottom, pageSetupUnits)));
 
     return true;
 }

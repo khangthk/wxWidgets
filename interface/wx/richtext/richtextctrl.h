@@ -1254,12 +1254,12 @@ public:
     bool EndSymbolBullet();
 
     /**
-        Begins applying a symbol bullet.
+        Begins applying a standard bullet.
     */
     bool BeginStandardBullet(const wxString& bulletName, int leftIndent, int leftSubIndent, int bulletStyle = wxTEXT_ATTR_BULLET_STYLE_STANDARD);
 
     /**
-        Begins applying a standard bullet.
+        Ends applying a standard bullet.
     */
     bool EndStandardBullet();
 
@@ -1376,7 +1376,7 @@ public:
     /**
         Implements layout. An application may override this to perform operations before or after layout.
     */
-    virtual void DoLayoutBuffer(wxRichTextBuffer& buffer, wxDC& dc, wxRichTextDrawingContext& context, const wxRect& rect, const wxRect& parentRect, int flags);
+    virtual void DoLayoutBuffer(wxRichTextBuffer& buffer, wxReadOnlyDC& dc, wxRichTextDrawingContext& context, const wxRect& rect, const wxRect& parentRect, int flags);
 
     /**
         Move the caret to the given character position.

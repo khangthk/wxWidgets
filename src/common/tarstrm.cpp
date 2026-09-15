@@ -279,14 +279,7 @@ bool wxTarHeaderBlock::SetPath(const wxString& name, wxMBConv& conv)
     // if the conversion fails make an approximation
     if (!nameBuf) {
         badconv = true;
-        size_t len = name.length();
-        wxCharBuffer approx(len);
-        for (size_t i = 0; i < len; i++)
-        {
-            wxChar c = name[i];
-            approx.data()[i] = c & ~0x7F ? '_' : c;
-        }
-        nameBuf = approx;
+        nameBuf = name.ToAscii();
     }
 
     const char *mbName = nameBuf;
@@ -629,6 +622,9 @@ void wxTarEntry::SetMode(int mode)
 /////////////////////////////////////////////////////////////////////////////
 // Input stream
 
+// Default cap of 10 MiB; can be changed with SetMaxExtendedHeaderSize().
+size_t wxTarInputStream::sm_maxExtendedHeaderSize = 10 * 1024 * 1024;
+
 wxTarInputStream::wxTarInputStream(wxInputStream& stream,
                                    wxMBConv& conv /*=wxConvLocal*/)
  :  wxArchiveInputStream(stream, conv)
@@ -916,8 +912,16 @@ bool wxTarInputStream::ReadExtendedHeader(wxTarHeaderRecords*& recs)
     if (!recs)
         recs = new wxTarHeaderRecords;
 
-    // round length up to a whole number of blocks
     size_t len = m_hdr->GetOctal(TAR_SIZE);
+
+    // reject an unreasonably large extended header to avoid excessive allocation
+    if (len > GetMaxExtendedHeaderSize())
+    {
+        wxLogError(_("Extended tar header size %zu is greater than maximum allowed."), len);
+        return false;
+    }
+
+    // round length up to a whole number of blocks
     size_t size = RoundUpSize(len);
 
     // read in the whole header since it should be small
@@ -940,8 +944,9 @@ bool wxTarInputStream::ReadExtendedHeader(wxTarHeaderRecords*& recs)
         while (isdigit((unsigned char) *p))
             recSize = recSize * 10 + *p++ - '0';
 
-        // validity checks
-        if (recPos + recSize > len)
+        // validity checks: write this carefully to avoid adding anything to
+        // recSize as addition could overflow
+        if (recSize > len - recPos)
             break;
         if (recSize < p - pRec + (size_t)3 || *p != ' '
                 || pRec[recSize - 1] != '\012') {
@@ -1434,14 +1439,14 @@ void wxTarOutputStream::SetExtendedHeader(const wxString& key,
         char buf[32];
         // length of "99<space><key>=<value>\n"
         unsigned long length = strlen(utf_value) + strlen(utf_key) + 5;
-        sprintf(buf, "%lu", length);
+        snprintf(buf, sizeof(buf), "%lu", length);
         // the length includes itself
         size_t lenlen = strlen(buf);
         if (lenlen != 2) {
             length += lenlen - 2;
-            sprintf(buf, "%lu", length);
+            snprintf(buf, sizeof(buf), "%lu", length);
             if (strlen(buf) > lenlen)
-                sprintf(buf, "%lu", ++length);
+                snprintf(buf, sizeof(buf), "%lu", ++length);
         }
 
         // reallocate m_extendedHdr if it's not big enough
@@ -1462,7 +1467,8 @@ void wxTarOutputStream::SetExtendedHeader(const wxString& key,
 
         // append the new record
         char *append = strchr(m_extendedHdr, 0);
-        sprintf(append, "%s %s=%s\012", buf,
+        snprintf(append, m_extendedSize - (append - m_extendedHdr),
+                "%s %s=%s\012", buf,
                 (const char*)utf_key, (const char*)utf_value);
     }
     else {

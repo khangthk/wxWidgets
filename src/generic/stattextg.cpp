@@ -56,7 +56,10 @@ void wxGenericStaticText::DoDrawLabel(wxDC& dc, const wxRect& rect)
 {
 #if wxUSE_MARKUP
     if ( m_markupText )
-        m_markupText->Render(dc, rect, wxMarkupText::Render_ShowAccels);
+    {
+        m_markupText->Render(dc, rect, wxMarkupText::Render_ShowAccels,
+                             GetAlignment());
+    }
     else
 #endif // wxUSE_MARKUP
         dc.DrawLabel(m_label, rect, GetAlignment(), m_mnemonic);
@@ -69,14 +72,24 @@ void wxGenericStaticText::OnPaint(wxPaintEvent& WXUNUSED(event))
     wxRect rect = GetClientRect();
     if ( !IsEnabled() )
     {
-        // draw shadow of the text
-        dc.SetTextForeground(
-                       wxSystemSettings::GetColour(wxSYS_COLOUR_BTNHIGHLIGHT));
-        wxRect rectShadow = rect;
-        rectShadow.Offset(1, 1);
-        DoDrawLabel(dc, rectShadow);
-        dc.SetTextForeground(
-                       wxSystemSettings::GetColour(wxSYS_COLOUR_BTNSHADOW));
+        // 3D shadow colours don't make sense in dark mode which has "flat"
+        // appearance, so use just a single "disabled" colour in it instead.
+        if ( wxSystemSettings::GetAppearance().IsDark() )
+        {
+            dc.SetTextForeground(
+                wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+        }
+        else
+        {
+            // draw shadow of the text
+            dc.SetTextForeground(
+                wxSystemSettings::GetColour(wxSYS_COLOUR_BTNHIGHLIGHT));
+            wxRect rectShadow = rect;
+            rectShadow.Offset(1, 1);
+            DoDrawLabel(dc, rectShadow);
+            dc.SetTextForeground(
+                wxSystemSettings::GetColour(wxSYS_COLOUR_BTNSHADOW));
+        }
     }
     DoDrawLabel(dc, rect);
 }
@@ -124,10 +137,11 @@ bool wxGenericStaticText::DoSetLabelMarkup(const wxString& markup)
     if ( !wxStaticTextBase::DoSetLabelMarkup(markup) )
         return false;
 
+    if ( m_markupText && !m_markupText->SetMarkup(markup) )
+        return true;
+
     if ( !m_markupText )
         m_markupText = new wxMarkupText(markup);
-    else
-        m_markupText->SetMarkup(markup);
 
     AutoResizeIfNecessary();
 

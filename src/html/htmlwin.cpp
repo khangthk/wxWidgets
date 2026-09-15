@@ -29,6 +29,7 @@
 #include "wx/clipbrd.h"
 #include "wx/recguard.h"
 
+#include <array>
 #include <list>
 
 // uncomment this line to visually show the extent of the selection
@@ -194,49 +195,46 @@ void wxHtmlWindowMouseHelper::HandleIdle(wxHtmlCell *rootCell,
                                          const wxPoint& pos)
 {
     wxHtmlCell *cell = rootCell ? rootCell->FindCellByPos(pos.x, pos.y) : nullptr;
+    wxHtmlLinkInfo *lnk = nullptr;
+    wxPoint relpos;
 
-    if (cell != m_tmpLastCell)
+    if ( cell )
     {
-        wxHtmlLinkInfo *lnk = nullptr;
-        if (cell)
-        {
-            // adjust the coordinates to be relative to this cell:
-            wxPoint relpos = pos - cell->GetAbsPos(rootCell);
-            lnk = cell->GetLink(relpos.x, relpos.y);
-        }
-
-        wxCursor cur;
-        if (cell)
-            cur = cell->GetMouseCursorAt(m_interface, pos);
-        else
-            cur = m_interface->GetHTMLCursor(
-                        wxHtmlWindowInterface::HTMLCursor_Default);
-
-        m_interface->GetHTMLWindow()->SetCursor(cur);
-
-        if (lnk != m_tmpLastLink)
-        {
-            if (lnk)
-                m_interface->SetHTMLStatusText(lnk->GetHref());
-            else
-                m_interface->SetHTMLStatusText(wxEmptyString);
-
-            m_tmpLastLink = lnk;
-        }
-
-        m_tmpLastCell = cell;
+        relpos = pos - cell->GetAbsPos(rootCell);
+        lnk = cell->GetLink(relpos.x, relpos.y);
     }
-    else // mouse moved but stayed in the same cell
+
+    wxCursor cur;
+    if ( cell )
+    {
+        cur = cell->GetMouseCursorAt(m_interface, relpos);
+    }
+    else
+    {
+        cur = m_interface->GetHTMLCursor(
+                    wxHtmlWindowInterface::HTMLCursor_Default);
+    }
+
+    m_interface->GetHTMLWindow()->SetCursor(cur);
+
+    if ( lnk != m_tmpLastLink )
+    {
+        if ( lnk )
+            m_interface->SetHTMLStatusText(lnk->GetHref());
+        else
+            m_interface->SetHTMLStatusText(wxEmptyString);
+
+        m_tmpLastLink = lnk;
+    }
+
+    if ( cell == m_tmpLastCell )
     {
         if ( cell )
-        {
-            // A single cell can have different cursors for different positions,
-            // so update cursor for this case as well.
-            wxCursor cur = cell->GetMouseCursorAt(m_interface, pos);
-            m_interface->GetHTMLWindow()->SetCursor(cur);
-
-            OnCellMouseHover(cell, pos.x, pos.y);
-        }
+            OnCellMouseHover(cell, relpos.x, relpos.y);
+    }
+    else
+    {
+        m_tmpLastCell = cell;
     }
 
     m_tmpMouseMoved = false;
@@ -286,18 +284,39 @@ void wxHtmlWindowMouseHelper::OnCellMouseHover(wxHtmlCell * cell,
 wxList wxHtmlWindow::m_Filters;
 wxHtmlFilter *wxHtmlWindow::m_DefaultFilter = nullptr;
 wxHtmlProcessorList *wxHtmlWindow::m_GlobalProcessors = nullptr;
-wxCursor *wxHtmlWindow::ms_cursorLink = nullptr;
-wxCursor *wxHtmlWindow::ms_cursorText = nullptr;
-wxCursor *wxHtmlWindow::ms_cursorDefault = nullptr;
+
+namespace
+{
+
+constexpr int HTML_CURSORS_COUNT = 3;
+
+static_assert(wxHtmlWindowInterface::HTMLCursor_Text + 1 == HTML_CURSORS_COUNT,
+              "HTMLCursor enum values must be contiguous and start from 0");
+
+wxCursorBundle& DefaultCursor(int type)
+{
+    static std::array<wxCursorBundle, HTML_CURSORS_COUNT> s_cursors;
+
+    // For compatibility with the existing code we handle all unknown cursors
+    // as HTMLCursor_Default, but this really shouldn't ever happen.
+    if ( type < 0 || type >= HTML_CURSORS_COUNT )
+        return s_cursors[wxHtmlWindowInterface::HTMLCursor_Default];
+
+    return s_cursors[type];
+}
+
+} // anonymous namespace
 
 void wxHtmlWindow::CleanUpStatics()
 {
     wxDELETE(m_DefaultFilter);
     wxClearList(m_Filters);
     wxDELETE(m_GlobalProcessors);
-    wxDELETE(ms_cursorLink);
-    wxDELETE(ms_cursorText);
-    wxDELETE(ms_cursorDefault);
+
+    for ( int i = 0; i < HTML_CURSORS_COUNT; ++i )
+    {
+        DefaultCursor(i).Clear();
+    }
 }
 
 void wxHtmlWindow::Init()
@@ -1075,7 +1094,7 @@ void wxHtmlWindow::DoEraseBackground(wxDC& dc)
     {
         // draw the background bitmap tiling it over the entire window area
         const wxSize sz = GetVirtualSize();
-        const wxSize sizeBmp(bmp.GetLogicalWidth(), bmp.GetLogicalHeight());
+        const wxSize sizeBmp(bmp.GetLogicalSize());
         for ( wxCoord x = 0; x < sz.x; x += sizeBmp.x )
         {
             for ( wxCoord y = 0; y < sz.y; y += sizeBmp.y )
@@ -1546,13 +1565,7 @@ void wxHtmlWindow::OnInternalIdle()
 
         // handle cursor and status bar text changes:
 
-        // NB: because we're passing in 'cell' and not 'm_Cell' (so that the
-        //     leaf cell lookup isn't done twice), we need to adjust the
-        //     position for the new root:
-        wxPoint posInCell(x, y);
-        if (cell)
-            posInCell -= cell->GetAbsPos();
-        wxHtmlWindowMouseHelper::HandleIdle(cell, posInCell);
+        wxHtmlWindowMouseHelper::HandleIdle(m_Cell, wxPoint(x, y));
     }
 }
 
@@ -1871,53 +1884,47 @@ void wxHtmlWindow::SetHTMLStatusText(const wxString& text)
 }
 
 /*static*/
-wxCursor wxHtmlWindow::GetDefaultHTMLCursor(HTMLCursor type)
+wxCursor
+wxHtmlWindow::GetDefaultHTMLCursor(HTMLCursor type, const wxWindow* window)
 {
-    switch (type)
+    wxCursorBundle& cursor = DefaultCursor(type);
+
+    if ( !cursor.IsOk() )
     {
-        case HTMLCursor_Link:
-            if ( !ms_cursorLink )
-                ms_cursorLink = new wxCursor(wxCURSOR_HAND);
-            return *ms_cursorLink;
+        wxStockCursor defCursor = wxCURSOR_NONE;
+        switch (type)
+        {
+            case HTMLCursor_Link:
+                defCursor = wxCURSOR_HAND;
+                break;
 
-        case HTMLCursor_Text:
-            if ( !ms_cursorText )
-                ms_cursorText = new wxCursor(wxCURSOR_IBEAM);
-            return *ms_cursorText;
+            case HTMLCursor_Text:
+                defCursor = wxCURSOR_IBEAM;
+                break;
 
-        case HTMLCursor_Default:
-        default:
-            if ( !ms_cursorDefault )
-                ms_cursorDefault = new wxCursor(wxCURSOR_ARROW);
-            return *ms_cursorDefault;
+            case HTMLCursor_Default:
+                defCursor = wxCURSOR_ARROW;
+                break;
+        }
+
+        wxASSERT_MSG( defCursor != wxCURSOR_NONE, "invalid cursor type");
+
+        cursor = wxCursorBundle(defCursor);
     }
+
+    return cursor.GetCursorFor(window);
 }
 
 wxCursor wxHtmlWindow::GetHTMLCursor(HTMLCursor type) const
 {
-    return GetDefaultHTMLCursor(type);
+    return GetDefaultHTMLCursor(type, this);
 }
 
 /*static*/
-void wxHtmlWindow::SetDefaultHTMLCursor(HTMLCursor type, const wxCursor& cursor)
+void
+wxHtmlWindow::SetDefaultHTMLCursor(HTMLCursor type, const wxCursorBundle& cursor)
 {
-    switch (type)
-    {
-        case HTMLCursor_Link:
-            delete ms_cursorLink;
-            ms_cursorLink = new wxCursor(cursor);
-            return;
-
-        case HTMLCursor_Text:
-            delete ms_cursorText;
-            ms_cursorText = new wxCursor(cursor);
-            return;
-
-        case HTMLCursor_Default:
-        default:
-            delete ms_cursorText;
-            ms_cursorDefault = new wxCursor(cursor);
-    }
+    DefaultCursor(type) = cursor;
 }
 
 //-----------------------------------------------------------------------------

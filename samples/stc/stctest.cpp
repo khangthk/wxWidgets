@@ -38,6 +38,10 @@
 #include "edit.h"        // Edit module
 #include "prefs.h"       // Prefs
 
+// Used for mini map window.
+#include "wx/stc/minimap.h"
+#include "wx/splitter.h"
+
 //----------------------------------------------------------------------------
 // resources
 //----------------------------------------------------------------------------
@@ -96,8 +100,11 @@ private:
     AppFrame* m_frame;
 
     wxFrame* MinimalEditor();
+    void ShowDocumentMap(wxWindow* parent);
+
 protected:
     void OnMinimalEditor(wxCommandEvent&);
+    void OnDocumentMap(wxCommandEvent&);
     wxDECLARE_EVENT_TABLE();
 };
 
@@ -186,6 +193,7 @@ wxIMPLEMENT_APP(App);
 
 wxBEGIN_EVENT_TABLE(App, wxApp)
 EVT_MENU(myID_WINDOW_MINIMAL, App::OnMinimalEditor)
+EVT_MENU(myID_WINDOW_DOCMAP, App::OnDocumentMap)
 wxEND_EVENT_TABLE()
 
 //----------------------------------------------------------------------------
@@ -238,7 +246,7 @@ int App::OnExit () {
     if (g_pageSetupData) delete g_pageSetupData;
 #endif // wxUSE_PRINTING_ARCHITECTURE
 
-    return 0;
+    return wxApp::OnExit();
 }
 
 //----------------------------------------------------------------------------
@@ -467,7 +475,7 @@ void AppFrame::CreateMenu ()
     menuFile->Append (wxID_SAVEAS, _("Save &as ..\tCtrl+Shift+S"));
     menuFile->Append (wxID_CLOSE, _("&Close\tCtrl+W"));
     menuFile->AppendSeparator();
-    menuFile->Append (myID_PROPERTIES, _("Proper&ties ..\tCtrl+I"));
+    menuFile->Append (myID_PROPERTIES, _("Proper&ties ..\tCtrl+Shift+T"));
     menuFile->AppendSeparator();
     menuFile->Append (wxID_PRINT_SETUP, _("Print Set&up .."));
     menuFile->Append (wxID_PREVIEW, _("Print Pre&view\tCtrl+Shift+P"));
@@ -498,8 +506,8 @@ void AppFrame::CreateMenu ()
     menuEdit->Append (myID_GOTO, _("&Goto\tCtrl+G"));
     menuEdit->Enable (myID_GOTO, false);
     menuEdit->AppendSeparator();
-    menuEdit->Append (myID_INDENTINC, _("&Indent increase\tTab"));
-    menuEdit->Append (myID_INDENTRED, _("I&ndent reduce\tShift+Tab"));
+    menuEdit->Append (myID_INDENTINC, _("&Indent increase\tCtrl+I"));
+    menuEdit->Append (myID_INDENTRED, _("I&ndent reduce\tShift+Ctrl+I"));
     menuEdit->AppendSeparator();
     menuEdit->Append (wxID_SELECTALL, _("&Select all\tCtrl+A"));
     menuEdit->Append (myID_SELECTLINE, _("Select &line\tCtrl+L"));
@@ -532,6 +540,9 @@ void AppFrame::CreateMenu ()
     menuView->AppendCheckItem (myID_WHITESPACE, _("Show white&space"));
     menuView->AppendSeparator();
     menuView->Append (myID_USECHARSET, _("Use &code page of .."), menuCharset);
+    menuView->AppendSeparator();
+    menuView->Append(myID_WINDOW_MINIMAL, _("&Minimal editor"));
+    menuView->Append(myID_WINDOW_DOCMAP, _("Document &map\tF2"));
 
     // Annotations menu
     wxMenu* menuAnnotations = new wxMenu;
@@ -606,10 +617,6 @@ void AppFrame::CreateMenu ()
 #endif
     menuExtra->AppendCheckItem (myID_CUSTOM_POPUP, _("C&ustom context menu"));
 
-    // Window menu
-    wxMenu *menuWindow = new wxMenu;
-    menuWindow->Append(myID_WINDOW_MINIMAL, _("&Minimal editor"));
-
     // Help menu
     wxMenu *menuHelp = new wxMenu;
     menuHelp->Append (wxID_ABOUT, _("&About ..\tCtrl+D"));
@@ -621,7 +628,6 @@ void AppFrame::CreateMenu ()
     m_menuBar->Append (menuAnnotations, _("&Annotations"));
     m_menuBar->Append (menuIndicators, _("&Indicators"));
     m_menuBar->Append (menuExtra, _("E&xtra"));
-    m_menuBar->Append (menuWindow, _("&Window"));
     m_menuBar->Append (menuHelp, _("&Help"));
     SetMenuBar (m_menuBar);
 
@@ -683,28 +689,28 @@ AppAbout::AppAbout (wxWindow *parent,
     // about info
     wxGridSizer *aboutinfo = new wxGridSizer (2, 0, 2);
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, _("Written by: ")),
-                    0, wxALIGN_LEFT);
+                    wxSizerFlags().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, APP_MAINT),
-                    1, wxEXPAND | wxALIGN_LEFT);
+                    wxSizerFlags(1).Expand().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, _("Version: ")),
-                    0, wxALIGN_LEFT);
+                    wxSizerFlags().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, versionInfo),
-                    1, wxEXPAND | wxALIGN_LEFT);
+                    wxSizerFlags(1).Expand().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, _("Licence type: ")),
-                    0, wxALIGN_LEFT);
+                    wxSizerFlags().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, APP_LICENCE),
-                    1, wxEXPAND | wxALIGN_LEFT);
+                    wxSizerFlags(1).Expand().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, _("Copyright: ")),
-                    0, wxALIGN_LEFT);
+                    wxSizerFlags().Left());
     aboutinfo->Add (new wxStaticText(this, wxID_ANY, APP_COPYRIGTH),
-                    1, wxEXPAND | wxALIGN_LEFT);
+                    wxSizerFlags(1).Expand().Left());
 
     // about icontitle//info
     wxBoxSizer *aboutpane = new wxBoxSizer (wxHORIZONTAL);
     wxBitmap bitmap = wxBitmap(wxICON (sample));
     aboutpane->Add (new wxStaticBitmap (this, wxID_ANY, bitmap),
-                    0, wxALIGN_LEFT|wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 20);
-    aboutpane->Add (aboutinfo, 1, wxEXPAND);
+                    wxSizerFlags().Left().CentreVertical().Border(wxLEFT|wxRIGHT, FromDIP(20)));
+    aboutpane->Add (aboutinfo, wxSizerFlags(1).Expand());
     aboutpane->Add (60, 0);
 
     // about complete
@@ -712,14 +718,14 @@ AppAbout::AppAbout (wxWindow *parent,
     totalpane->Add (0, 20);
     wxStaticText *appname = new wxStaticText(this, wxID_ANY, *g_appname);
     appname->SetFont (wxFontInfo(24).Bold());
-    totalpane->Add (appname, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, 40);
+    totalpane->Add (appname, wxSizerFlags().Centre().Border(wxLEFT | wxRIGHT, FromDIP(40)));
     totalpane->Add (0, 10);
-    totalpane->Add (aboutpane, 0, wxEXPAND | wxALL, 4);
+    totalpane->Add (aboutpane, wxSizerFlags().Expand().Border());
     totalpane->Add (new wxStaticText(this, wxID_ANY, APP_DESCR),
-                    0, wxALIGN_CENTER | wxALL, 10);
+                    wxSizerFlags().Centre().DoubleBorder());
     wxButton *okButton = new wxButton (this, wxID_OK, _("OK"));
     okButton->SetDefault();
-    totalpane->Add (okButton, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+    totalpane->Add (okButton, wxSizerFlags().Centre().DoubleBorder(wxLEFT | wxRIGHT | wxBOTTOM));
 
     SetSizerAndFit (totalpane);
 
@@ -854,7 +860,7 @@ public:
         MinimalEditor* editor = new MinimalEditor(this);
         editor->SetFont(wxFontInfo().Family(wxFONTFAMILY_TELETYPE));
         wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
-        sizer->Add(editor, 1, wxEXPAND);
+        sizer->Add(editor, wxSizerFlags(1).Expand());
         SetSizer(sizer);
         editor->SetText(
            "<xml>\n"
@@ -878,3 +884,45 @@ void App::OnMinimalEditor(wxCommandEvent& WXUNUSED(event))
     MinimalEditor();
 }
 
+void App::ShowDocumentMap(wxWindow* parent)
+{
+    wxDialog dialog(parent, wxID_ANY, "Editor with Document Map",
+                    wxDefaultPosition,
+                    wxWindow::FromDIP(wxSize(800, 600), m_frame),
+                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+
+    auto* const splitter = new wxSplitterWindow(&dialog, wxID_ANY);
+
+    auto* const edit = new Edit(splitter);
+    edit->LoadFile("stctest.cpp");
+
+    // Show line numbers in the margin, which are hidden by default.
+    edit->ToggleLineNumbers();
+
+    edit->SetWrapMode(wxSTC_WRAP_WORD);
+    edit->SetWrapVisualFlags(wxSTC_WRAPVISUALFLAG_END);
+
+    auto* const map = new wxStyledTextCtrlMiniMap(splitter, edit);
+
+    // Create a marker just to show that it is shown in the map as well.
+    //
+    // Note that this should be done after creating the map, markers defined
+    // before creating it wouldn't be shown in it.
+    edit->MarkerDefine(3, wxSTC_MARK_ROUNDRECT, *wxRED, *wxRED);
+    edit->MarkerAdd(111, 3);
+
+    splitter->SplitVertically(edit, map);
+    splitter->SetMinimumPaneSize(dialog.FromDIP(10));
+
+    dialog.Bind(wxEVT_SIZE, [&](wxSizeEvent& event) {
+        splitter->SetSashPosition(-dialog.FromDIP(200));
+        event.Skip();
+    });
+
+    dialog.ShowModal();
+}
+
+void App::OnDocumentMap(wxCommandEvent& WXUNUSED(event))
+{
+    ShowDocumentMap(m_frame);
+}

@@ -125,13 +125,17 @@ struct wxLinuxDistributionInfo
     wxString Release;
     wxString CodeName;
     wxString Description;
+    wxString ParentName;
+    wxString ParentCodeName;
 
     bool operator==(const wxLinuxDistributionInfo& ldi) const
     {
         return Id == ldi.Id &&
                Release == ldi.Release &&
                CodeName == ldi.CodeName &&
-               Description == ldi.Description;
+               Description == ldi.Description &&
+               ParentName == ldi.ParentName &&
+               ParentCodeName == ldi.ParentCodeName;
     }
 
     bool operator!=(const wxLinuxDistributionInfo& ldi) const
@@ -248,6 +252,9 @@ public:
         { return m_tkVersionMinor; }
     int GetToolkitMicroVersion() const
         { return m_tkVersionMicro; }
+
+    wxString GetPlatformDescription() const
+        { return m_platformDescription; }
 
     bool CheckToolkitVersion(int major, int minor, int micro = 0) const
     {
@@ -435,6 +442,9 @@ protected:
 
     // native CPU architecture family name, possibly empty if unknown
     wxString m_nativeCpuArch;
+
+    // e.g. compile-time version of toolkit, possibly empty
+    wxString m_platformDescription;
 };
 
 // Return true if running under Wine and fills the provided pointer with

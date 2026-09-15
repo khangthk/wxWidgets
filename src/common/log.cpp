@@ -40,6 +40,8 @@
 #include "wx/crt.h"
 #include "wx/vector.h"
 
+#include "wx/private/log.h"
+
 // other standard headers
 #include <errno.h>
 
@@ -152,9 +154,6 @@ PreviousLogInfo gs_prevLog;
 // map containing all components for which log level was explicitly set
 //
 // NB: all accesses to it must be protected by GetLevelsCS() critical section
-namespace
-{
-
 using ComponentLevelsMap = std::unordered_map<wxString, wxLogLevel>;
 
 inline ComponentLevelsMap& GetComponentLevels()
@@ -162,27 +161,6 @@ inline ComponentLevelsMap& GetComponentLevels()
     static ComponentLevelsMap s_componentLevels;
     return s_componentLevels;
 }
-
-} // anonymous namespace
-
-// ----------------------------------------------------------------------------
-// wxLogOutputBest: wxLog wrapper around wxMessageOutputBest
-// ----------------------------------------------------------------------------
-
-class wxLogOutputBest : public wxLog
-{
-public:
-    wxLogOutputBest() { }
-
-protected:
-    virtual void DoLogText(const wxString& msg) override
-    {
-        wxMessageOutputBest().Output(msg);
-    }
-
-private:
-    wxDECLARE_NO_COPY_CLASS(wxLogOutputBest);
-};
 
 } // anonymous namespace
 
@@ -531,15 +509,20 @@ wxLog *wxLog::GetMainThreadActiveTarget()
             s_bInGetActiveTarget = true;
 
             // ask the application to create a log target for us
-            if ( wxTheApp != nullptr )
-                ms_pLogger = wxTheApp->GetTraits()->CreateLogTarget();
-            else
-                ms_pLogger = new wxLogOutputBest;
+            ms_pLogger = wxApp::GetValidTraits().CreateLogTarget();
 
             s_bInGetActiveTarget = false;
-
-            // do nothing if it fails - what can we do?
         }
+    }
+
+    if ( !ms_pLogger )
+    {
+        // if we still don't have any logger, provide the default fallback, but
+        // don't remember it -- we don't want to use it if a real logger if we
+        // can call CreateLogTarget() successfully later
+        static wxLogOutputBest s_defaultLogger;
+
+        return &s_defaultLogger;
     }
 
     return ms_pLogger;
@@ -691,12 +674,9 @@ void wxLog::ClearTraceMasks()
     wxCRIT_SECT_LOCKER(lock, GetTraceMaskCS());
 
     const wxArrayString& masks = GetTraceMasks();
-    for ( wxArrayString::const_iterator it = masks.begin(),
-                                        en = masks.end();
-          it != en;
-          ++it )
+    for ( const auto& traceMask : masks )
     {
-        if ( *it == mask)
+        if ( traceMask == mask)
             return true;
     }
 
@@ -769,11 +749,9 @@ void wxLog::FlushThreadMessages()
 
     if ( !bufferedLogRecords.empty() )
     {
-        for ( wxLogRecords::const_iterator it = bufferedLogRecords.begin();
-              it != bufferedLogRecords.end();
-              ++it )
+        for ( const auto& record : bufferedLogRecords )
         {
-            CallDoLogNow(it->level, it->msg, it->info);
+            CallDoLogNow(record.level, record.msg, record.info);
         }
     }
 }

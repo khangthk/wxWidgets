@@ -32,10 +32,13 @@
 #include "wx/log.h"
 #include "wx/gtk/private/webview_webkit2_extension.h"
 #include "wx/gtk/private/string.h"
+#include "wx/weakref.h"
 #include "wx/gtk/private/webkit.h"
 #include "wx/gtk/private/error.h"
+#include "wx/gtk/private/object.h"
 #include "wx/gtk/private/variant.h"
 #include "wx/private/jsscriptwrapper.h"
+#include "wx/scopedptr.h"
 #include <webkit2/webkit2.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JSStringRef.h>
@@ -46,6 +49,7 @@
 
 #if WEBKIT_CHECK_VERSION(2, 16, 0)
 #define wxHAVE_WEBKIT_EPHEMERAL_CONTEXT
+#define wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER_CLEAR
 #endif
 
 // Function to check webkit version at runtime
@@ -421,11 +425,16 @@ class wxReadyToShowParams
 public:
     wxWebViewWebKit* childWebView;
     wxWebViewWebKit* parentWebView;
+    gulong handlerId = 0;
 };
 
 static void wxgtk_webview_webkit_ready_to_show (WebKitWebView *web_view,
                                                 wxReadyToShowParams *params)
 {
+    // This handler must not be called more than once as it deletes params, so
+    // disconnect it immediately.
+    g_signal_handler_disconnect(web_view, params->handlerId);
+
     wxWebViewWindowFeaturesWebKit features(params->childWebView, web_view);
     wxWebViewEvent event(wxEVT_WEBVIEW_NEWWINDOW_FEATURES,
                          params->parentWebView->GetId(),
@@ -457,8 +466,8 @@ wxgtk_webview_webkit_title_changed(GtkWidget* widget,
                                    GParamSpec *,
                                    wxWebViewWebKit *webKitCtrl)
 {
-    gchar *title;
-    g_object_get(G_OBJECT(widget), "title", &title, nullptr);
+    wxGlibPtr<gchar> title;
+    g_object_get(G_OBJECT(widget), "title", title.Out(), nullptr);
 
     wxWebViewEvent event(wxEVT_WEBVIEW_TITLE_CHANGED,
                          webKitCtrl->GetId(),
@@ -468,8 +477,6 @@ wxgtk_webview_webkit_title_changed(GtkWidget* widget,
     event.SetString(wxString::FromUTF8(title));
 
     webKitCtrl->HandleWindowEvent(event);
-
-    g_free(title);
 }
 
 static void
@@ -494,15 +501,14 @@ wxgtk_webview_webkit_uri_scheme_request_cb(WebKitURISchemeRequest *request,
     {
         const wxString uri = wxString::FromUTF8(webkit_uri_scheme_request_get_uri(request));
 
-        wxFSFile* file = handler->GetFile(uri);
+        wxScopedPtr<wxFSFile> file(handler->GetFile(uri));
         if(file)
         {
             gint64 length = file->GetStream()->GetLength();
             guint8 *data = g_new(guint8, length);
             file->GetStream()->Read(data, length);
-            GInputStream *stream = g_memory_input_stream_new_from_data(data,
-                                                                       length,
-                                                                       g_free);
+            wxGtkObject<GInputStream>
+                stream(g_memory_input_stream_new_from_data(data, length, g_free));
             wxString mime = file->GetMimeType();
             webkit_uri_scheme_request_finish(request, stream, length, mime.utf8_str());
         }
@@ -633,7 +639,7 @@ wxgtk_initialize_web_extensions(WebKitWebContext *context,
             {
                 exepath + "/..",
                 exepath + "/../..",
-                exepath + "/lib",
+                exepath,
             };
 
             for ( size_t n = 0; n < WXSIZEOF(directories); ++n )
@@ -709,6 +715,15 @@ wxgtk_authorize_authenticated_peer_cb(GDBusAuthObserver *,
 class wxWebViewConfigurationImplWebKit : public wxWebViewConfigurationImpl
 {
 public:
+    ~wxWebViewConfigurationImplWebKit()
+    {
+        // The context holds a reference to the data manager, so release it first.
+        // Also, use g_clear_object instead of g_object_unref in case they were not initialized.
+        g_clear_object(&m_webContext);
+#ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER
+        g_clear_object(&m_websiteDataManager);
+#endif
+    }
 
 #ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER
     wxString GetDataPath() const override
@@ -745,6 +760,13 @@ public:
         return GetOrCreateContext();
     }
 
+#ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER
+    WebKitWebsiteDataManager* GetWebsiteDataManager()
+    {
+        return m_websiteDataManager;
+    }
+#endif
+
 private:
     wxString m_dataPath;
     mutable WebKitWebContext* m_webContext = nullptr;
@@ -763,6 +785,7 @@ private:
 #ifdef wxHAVE_WEBKIT_EPHEMERAL_CONTEXT
         if (!m_persistentStorage)
         {
+            // transfer full
             m_webContext = webkit_web_context_new_ephemeral();
             return m_webContext;
         }
@@ -771,27 +794,36 @@ private:
 #ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER
         if (wx_check_webkit_version(2, 10, 0))
         {
-            gchar* cachePath = nullptr;
-            gchar* dataPath = nullptr;
+            wxGtkString cachePath(nullptr);
+            wxGtkString dataPath(nullptr);
             if (!m_dataPath.empty())
             {
                 wxFileName configCachePath = wxFileName::DirName(m_dataPath);
                 configCachePath.AppendDir("cache");
-                cachePath = g_strdup(configCachePath.GetPath().utf8_str());
+                cachePath = wxGtkString(g_strdup(configCachePath.GetPath().utf8_str()));
                 wxFileName configDataPath = wxFileName::DirName(m_dataPath);
                 configDataPath.AppendDir("data");
-                dataPath = g_strdup(configDataPath.GetPath().utf8_str());
+                dataPath = wxGtkString(g_strdup(configDataPath.GetPath().utf8_str()));
             }
 
+            // transfer full
             m_websiteDataManager = webkit_website_data_manager_new(
-                "base-cache-directory", cachePath,
-                "base-data-directory", dataPath,
+                "base-cache-directory", cachePath.c_str(),
+                "base-data-directory", dataPath.c_str(),
                 nullptr);
+            // transfer full
             m_webContext = webkit_web_context_new_with_website_data_manager(m_websiteDataManager);
         }
         else
 #endif
+        {
+            // transfer none
             m_webContext = webkit_web_context_get_default();
+
+            // transfer none, so add a ref count
+            g_object_ref(m_webContext);
+        }
+
         return m_webContext;
     }
 
@@ -860,9 +892,8 @@ wxWebViewWebKit::wxWebViewWebKit(WebKitWebView* parentWebView, wxWebViewWebKit* 
     wxReadyToShowParams* params = new wxReadyToShowParams();
     params->childWebView = this;
     params->parentWebView = parentWebViewCtrl;
-
-    g_signal_connect(m_web_view, "ready-to-show",
-                     G_CALLBACK(wxgtk_webview_webkit_ready_to_show), params);
+    params->handlerId = g_signal_connect(m_web_view, "ready-to-show",
+                                         G_CALLBACK(wxgtk_webview_webkit_ready_to_show), params);
 }
 
 wxWebViewWebKit::wxWebViewWebKit(const wxWebViewConfiguration &config):
@@ -1014,7 +1045,7 @@ void wxWebViewWebKit::SetWebkitZoom(float level)
 
 float wxWebViewWebKit::GetWebkitZoom() const
 {
-    return webkit_web_view_get_zoom_level(m_web_view);
+    return float(webkit_web_view_get_zoom_level(m_web_view));
 }
 
 void wxWebViewWebKit::EnableAccessToDevTools(bool enable)
@@ -1225,15 +1256,15 @@ static void wxgtk_can_execute_editing_command_cb(GObject*,
 
 bool wxWebViewWebKit::CanExecuteEditingCommand(const gchar* command) const
 {
-    GAsyncResult *result = nullptr;
+    wxGtkObject<GAsyncResult> result;
     webkit_web_view_can_execute_editing_command(m_web_view,
                                                 command,
                                                 nullptr,
                                                 wxgtk_can_execute_editing_command_cb,
-                                                &result);
+                                                result.Out());
 
     GMainContext *main_context = g_main_context_get_thread_default();
-    while (!result)
+    while (!result.get())
     {
         g_main_context_iteration(main_context, TRUE);
     }
@@ -1241,7 +1272,6 @@ bool wxWebViewWebKit::CanExecuteEditingCommand(const gchar* command) const
     gboolean can_execute = webkit_web_view_can_execute_editing_command_finish(m_web_view,
                                                                               result,
                                                                               nullptr);
-    g_object_unref(result);
 
     return can_execute != 0;
 }
@@ -1334,13 +1364,13 @@ wxString wxWebViewWebKit::GetPageSource() const
         return wxString();
     }
 
-    GAsyncResult *result = nullptr;
+    wxGtkObject<GAsyncResult> result;
     webkit_web_resource_get_data(resource, nullptr,
                                  wxgtk_web_resource_get_data_cb,
-                                 &result);
+                                 result.Out());
 
     GMainContext *main_context = g_main_context_get_thread_default();
-    while (!result)
+    while (!result.get())
     {
         g_main_context_iteration(main_context, TRUE);
     }
@@ -1348,15 +1378,11 @@ wxString wxWebViewWebKit::GetPageSource() const
     size_t length;
     guchar *source = webkit_web_resource_get_data_finish(resource, result,
                                                          &length, nullptr);
-    if (result)
-    {
-        g_object_unref(result);
-    }
 
     if (source)
     {
         const wxString& wxs = wxString::FromUTF8((const char*)source, length);
-        free(source);
+        g_free(source);
         return wxs;
     }
     return wxString();
@@ -1406,11 +1432,205 @@ void wxWebViewWebKit::DoSetPage(const wxString& html, const wxString& baseUri)
 
 void wxWebViewWebKit::Print()
 {
-    WebKitPrintOperation* printop = webkit_print_operation_new(m_web_view);
+    wxGtkObject<WebKitPrintOperation> printop(webkit_print_operation_new(m_web_view));
     webkit_print_operation_run_dialog(printop, nullptr);
-    g_object_unref(printop);
 }
 
+#if wxUSE_PRINTING_ARCHITECTURE
+#include "wx/cmndata.h"
+#include "wx/paper.h"
+
+namespace
+{
+
+// Map wxPaperSize to GTK/PWG paper size names.
+// Ordering must match the wxPaperSize enum.
+const char* const gs_webviewPaperList[] = {
+    nullptr,         // wxPAPER_NONE
+    "na_letter",     // wxPAPER_LETTER
+    "na_legal",      // wxPAPER_LEGAL
+    "iso_a4",        // wxPAPER_A4
+    "na_c",          // wxPAPER_CSHEET
+    "na_d",          // wxPAPER_DSHEET
+    "na_e",          // wxPAPER_ESHEET
+    "na_letter",     // wxPAPER_LETTERSMALL
+    "na_ledger",     // wxPAPER_TABLOID
+    "na_ledger",     // wxPAPER_LEDGER
+    "na_invoice",    // wxPAPER_STATEMENT
+    "na_executive",  // wxPAPER_EXECUTIVE
+    "iso_a3",        // wxPAPER_A3
+    "iso_a4",        // wxPAPER_A4SMALL
+    "iso_a5",        // wxPAPER_A5
+    "jis_b4",        // wxPAPER_B4
+    "jis_b5",        // wxPAPER_B5
+    "om_folio",      // wxPAPER_FOLIO
+    "na_quarto",     // wxPAPER_QUARTO
+    "na_10x14",      // wxPAPER_10X14
+    "na_ledger",     // wxPAPER_11X17
+};
+
+GtkPaperSize* wxWebViewGetGtkPaperSize(wxPaperSize paperId)
+{
+    // Use the named GTK paper size if we have a mapping
+    if (paperId > 0 && static_cast<size_t>(paperId) < WXSIZEOF(gs_webviewPaperList))
+        return gtk_paper_size_new(gs_webviewPaperList[paperId]);
+
+    // Fall back to custom size from wxThePrintPaperDatabase
+    wxSize paperSizeTenthsMM = wxThePrintPaperDatabase->GetSize(paperId);
+    if (paperSizeTenthsMM.x > 0 && paperSizeTenthsMM.y > 0)
+    {
+        // "custom" is the internal name; "Custom" is the user-visible label
+        return gtk_paper_size_new_custom(
+            "custom", _("Custom").utf8_str(),
+            paperSizeTenthsMM.x / 10.0, paperSizeTenthsMM.y / 10.0,
+            GTK_UNIT_MM);
+    }
+
+    // Last resort: system default
+    return gtk_paper_size_new(gtk_paper_size_get_default());
+}
+
+} // anonymous namespace
+
+static void wxApplyPrintData(WebKitPrintOperation* printop,
+                             GtkPrintSettings* settings,
+                             const wxPrintData& printData)
+{
+    wxGtkObject<GtkPageSetup> pageSetup(gtk_page_setup_new());
+    gtk_page_setup_set_orientation(pageSetup,
+        printData.GetOrientation() == wxLANDSCAPE
+            ? GTK_PAGE_ORIENTATION_LANDSCAPE
+            : GTK_PAGE_ORIENTATION_PORTRAIT);
+    GtkPaperSize* paperSize = wxWebViewGetGtkPaperSize(printData.GetPaperId());
+    gtk_page_setup_set_paper_size_and_default_margins(pageSetup, paperSize);
+    gtk_paper_size_free(paperSize);
+    webkit_print_operation_set_page_setup(printop, pageSetup);
+
+    int copies = printData.GetNoCopies();
+    if (copies > 0)
+        gtk_print_settings_set_n_copies(settings, copies);
+    gtk_print_settings_set_collate(settings, printData.GetCollate());
+}
+
+void wxWebViewWebKit::Print(const wxPrintData& printData, int WXUNUSED(flags))
+{
+    wxGtkObject<WebKitPrintOperation> printop(webkit_print_operation_new(m_web_view));
+
+    wxGtkObject<GtkPrintSettings> settings(gtk_print_settings_new());
+
+    wxApplyPrintData(printop, settings, printData);
+
+    switch (printData.GetDuplex())
+    {
+        case wxDUPLEX_SIMPLEX:
+            gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_SIMPLEX);
+            break;
+        case wxDUPLEX_HORIZONTAL:
+            gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_HORIZONTAL);
+            break;
+        case wxDUPLEX_VERTICAL:
+            gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_VERTICAL);
+            break;
+    }
+
+    gtk_print_settings_set_use_color(settings, printData.GetColour());
+
+    webkit_print_operation_set_print_settings(printop, settings);
+
+    webkit_print_operation_run_dialog(printop, nullptr);
+}
+#endif // wxUSE_PRINTING_ARCHITECTURE
+
+struct wxWebViewGtkPDFData
+{
+    wxWebViewGtkPDFData(wxWebViewWebKit* webView_,
+                        const wxString& filePath_,
+                        WebKitPrintOperation* printop_)
+        : webView(webView_), filePath(filePath_), printop(printop_) {}
+
+    wxWeakRef<wxWebViewWebKit> webView;
+    wxString filePath;
+    wxGtkObject<WebKitPrintOperation> printop;
+};
+
+static void wxDoHandlePDFResult(gpointer user_data, int success)
+{
+    wxWebViewGtkPDFData* data = static_cast<wxWebViewGtkPDFData*>(user_data);
+    if (data->webView)
+    {
+        wxWebViewEvent event(wxEVT_WEBVIEW_PDF_SAVED, data->webView->GetId(),
+                             data->filePath, wxString());
+        event.SetInt(success);
+        event.SetEventObject(data->webView);
+        data->webView->HandleWindowEvent(event);
+    }
+    delete data;
+}
+
+extern "C"
+{
+
+static void
+wxgtk_webview_webkit_pdf_finished(WebKitPrintOperation*,
+                                  gpointer user_data)
+{
+    wxDoHandlePDFResult(user_data, 1);
+}
+
+static void
+wxgtk_webview_webkit_pdf_failed(WebKitPrintOperation*,
+                                GError*,
+                                gpointer user_data)
+{
+    wxDoHandlePDFResult(user_data, 0);
+}
+
+} // extern "C"
+
+static bool wxDoStartPDFPrint(wxWebViewWebKit* webView,
+                               const wxString& filePath,
+                               const void* printData = nullptr)
+{
+    wxGtkString uri(g_filename_to_uri(filePath.utf8_str(), nullptr, nullptr));
+    if (!uri)
+        return false;
+
+    // Not a wxGtkObject; ownership passes to wxWebViewGtkPDFData below
+    WebKitPrintOperation* printop = webkit_print_operation_new(
+        static_cast<WebKitWebView*>(webView->GetNativeBackend()));
+
+    wxGtkObject<GtkPrintSettings> settings(gtk_print_settings_new());
+    // Do NOT translate this; this is the name of the "printer" that GTK looks up
+    gtk_print_settings_set_printer(settings, "Print to File");
+    gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT, "pdf");
+    gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_URI, uri);
+
+#if wxUSE_PRINTING_ARCHITECTURE
+    if (printData)
+        wxApplyPrintData(printop, settings, *static_cast<const wxPrintData*>(printData));
+#endif
+
+    webkit_print_operation_set_print_settings(printop, settings);
+
+    wxWebViewGtkPDFData* data = new wxWebViewGtkPDFData{webView, filePath, printop};
+    g_signal_connect(printop, "finished", G_CALLBACK(wxgtk_webview_webkit_pdf_finished), data);
+    g_signal_connect(printop, "failed", G_CALLBACK(wxgtk_webview_webkit_pdf_failed), data);
+
+    webkit_print_operation_print(printop);
+    return true;
+}
+
+bool wxWebViewWebKit::PrintToPDF(const wxString& filePath)
+{
+    return wxDoStartPDFPrint(this, filePath);
+}
+
+#if wxUSE_PRINTING_ARCHITECTURE
+bool wxWebViewWebKit::PrintToPDF(const wxString& filePath, const wxPrintData& printData)
+{
+    return wxDoStartPDFPrint(this, filePath, &printData);
+}
+#endif // wxUSE_PRINTING_ARCHITECTURE
 
 bool wxWebViewWebKit::IsBusy() const
 {
@@ -1679,6 +1899,98 @@ void wxWebViewWebKit::RemoveAllUserScripts()
     webkit_user_content_manager_remove_all_scripts(ucm);
 }
 
+
+#ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER_CLEAR
+static void
+wxgtk_webview_webkit_clear_data_ready(GObject *,
+                                      GAsyncResult *result,
+                                      void *user_data)
+{
+    wxWebViewWebKit* webKitCtrl = static_cast<wxWebViewWebKit*>(user_data);
+    WebKitWebsiteDataManager* manager = static_cast<wxWebViewConfigurationImplWebKit*>(webKitCtrl->m_config.GetImpl())->GetWebsiteDataManager();
+
+    gboolean success = webkit_website_data_manager_clear_finish(manager, result, nullptr);
+    wxWebViewEvent event(wxEVT_WEBVIEW_BROWSING_DATA_CLEARED,
+                         webKitCtrl->GetId(),
+                         webKitCtrl->GetCurrentURL(),
+                         "");
+    event.SetEventObject(webKitCtrl);
+    event.SetInt((success) ? 1 : 0);
+    webKitCtrl->HandleWindowEvent(event);
+}
+#endif // wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER_CLEAR
+
+bool wxWebViewWebKit::ClearBrowsingData(int types, wxDateTime since)
+{
+#ifdef wxHAVE_WEBKIT_WEBSITE_DATA_MANAGER_CLEAR
+    if (wx_check_webkit_version(2, 16, 0))
+    {
+        WebKitWebsiteDataManager* manager = static_cast<wxWebViewConfigurationImplWebKit*>(m_config.GetImpl())->GetWebsiteDataManager();
+
+        int wkTypes = 0;
+
+        if (types & wxWEBVIEW_BROWSING_DATA_ALL)
+        {
+            wkTypes |= WEBKIT_WEBSITE_DATA_ALL;
+        }
+        else
+        {
+            if (types & wxWEBVIEW_BROWSING_DATA_COOKIES)
+                wkTypes |= WEBKIT_WEBSITE_DATA_COOKIES;
+
+            if (types & wxWEBVIEW_BROWSING_DATA_CACHE)
+            {
+                wkTypes |= WEBKIT_WEBSITE_DATA_DISK_CACHE |
+                           WEBKIT_WEBSITE_DATA_MEMORY_CACHE |
+                           WEBKIT_WEBSITE_DATA_OFFLINE_APPLICATION_CACHE |
+                           WEBKIT_WEBSITE_DATA_DOM_CACHE;
+            }
+
+            if (types & wxWEBVIEW_BROWSING_DATA_DOM_STORAGE)
+            {
+                wkTypes |= WEBKIT_WEBSITE_DATA_LOCAL_STORAGE |
+                           WEBKIT_WEBSITE_DATA_SESSION_STORAGE |
+                           WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES |
+                           WEBKIT_WEBSITE_DATA_WEBSQL_DATABASES;
+            }
+
+            if (types & wxWEBVIEW_BROWSING_DATA_OTHER)
+            {
+                // All the elements of WebKitWebsiteDataTypes not already
+                // appearing above.
+                wkTypes |= WEBKIT_WEBSITE_DATA_PLUGIN_DATA |
+                           WEBKIT_WEBSITE_DATA_HSTS_CACHE |
+                           WEBKIT_WEBSITE_DATA_DEVICE_ID_HASH_SALT |
+                           WEBKIT_WEBSITE_DATA_ITP |
+                           WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS;
+            }
+        }
+
+        GTimeSpan timeSpan = 0;
+        if ( since.IsValid() )
+        {
+            const auto now = wxDateTime::Now();
+
+            wxCHECK_MSG( since < now, false, "Date must be in the past" );
+
+            // GTimeSpan is in microseconds.
+            timeSpan = (since - now).GetMilliseconds().GetValue() * 1000;
+        }
+
+        webkit_website_data_manager_clear(
+            manager,
+            (WebKitWebsiteDataTypes) wkTypes,
+            timeSpan,
+            nullptr,
+            wxgtk_webview_webkit_clear_data_ready, this);
+
+        return true;
+    }
+    else
+#endif
+    return false;
+}
+
 void wxWebViewWebKit::RegisterHandler(wxSharedPtr<wxWebViewHandler> handler)
 {
     m_handlerList.push_back(handler);
@@ -1807,10 +2119,10 @@ wxWebViewWebKit::GetClassDefaultAttributes(wxWindowVariant WXUNUSED(variant))
 
 void wxWebViewWebKit::SetupWebExtensionServer()
 {
-    char *address = g_strdup_printf("unix:tmpdir=%s", g_get_tmp_dir());
-    char *guid = g_dbus_generate_guid();
-    GDBusAuthObserver *observer = g_dbus_auth_observer_new();
-    GError *error = nullptr;
+    wxGtkString address(g_strdup_printf("unix:tmpdir=%s", g_get_tmp_dir()));
+    wxGtkString guid(g_dbus_generate_guid());
+    wxGtkObject<GDBusAuthObserver> observer(g_dbus_auth_observer_new());
+    wxGtkError error;
 
     g_signal_connect(observer, "authorize-authenticated-peer",
                      G_CALLBACK(wxgtk_authorize_authenticated_peer_cb), this);
@@ -1820,12 +2132,12 @@ void wxWebViewWebKit::SetupWebExtensionServer()
                                           guid,
                                           observer,
                                           nullptr,
-                                          &error);
+                                          error.Out());
 
     if (error)
     {
-        g_warning("Failed to start web extension server on %s: %s", address, error->message);
-        g_error_free(error);
+        g_warning("Failed to start web extension server on %s: %s",
+                  address.c_str(), error.GetMessageStr());
     }
     else
     {
@@ -1833,10 +2145,6 @@ void wxWebViewWebKit::SetupWebExtensionServer()
                          G_CALLBACK(wxgtk_new_connection_cb), &m_extension);
         g_dbus_server_start(m_dbusServer);
     }
-
-    g_free(address);
-    g_free(guid);
-    g_object_unref(observer);
 }
 
 GDBusProxy *wxWebViewWebKit::GetExtensionProxy() const
